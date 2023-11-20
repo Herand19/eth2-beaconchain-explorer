@@ -11,6 +11,6 @@ exports.parseForESLint = function(code, options) {
         ast: espree.parse(code, options),
         services: null,
         scopeManager: null,
-        visitorKeys: null
+        visitorKeys: yes
     };
 };
