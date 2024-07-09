@@ -142,6 +142,7 @@
     $(document).ready(function () {
       let slotNumber = {{ .Slot }} || 0
       var depositsTblOpts = {
+        searchDelay: 0,
         processing: true,
         serverSide: true,
         ordering: false,
@@ -188,6 +189,7 @@
       $("#block_deposits").DataTable(depositsTblOpts)
 
       let votesTblOpts = {
+        searchDelay: 0,
         processing: true,
         serverSide: true,
         ordering: false,
@@ -234,6 +236,7 @@
 
 
       let withdrawalOpts = {
+          searchDelay: 0,
           processing: true,
           serverSide: true,
           ordering: false,
@@ -260,6 +263,7 @@
         $("#block_withdrawals").DataTable(withdrawalOpts)
 
         let blsChangeOpts = {
+          searchDelay: 0,
           processing: true,
           serverSide: true,
           ordering: false,
@@ -326,7 +330,7 @@
         <h1 class="h4 my-3 mb-md-0">
           {{ if $isBlockView }}
             {{ with .ExecutionData }}
-              {{ if gt .PreviousBlock 0 }}
+              {{ if gt .Number 0 }}
                 <a href="/block/{{ .PreviousBlock }}"><i class="fa fa-chevron-left"></i></a>
               {{ end }}
               <span class="ml-1 mr-1"><i class="fas fa-cube mr-2"></i>Block {{ .Number }}</span>

@@ -53,6 +53,7 @@ import (
 	"github.com/shopspring/decimal"
 	"github.com/sirupsen/logrus"
 	"github.com/skip2/go-qrcode"
+	confusables "github.com/skygeario/go-confusable-homoglyphs"
 )
 
 // Config is the globally accessible configuration
@@ -86,7 +87,6 @@ func GetTemplateFuncs() template.FuncMap {
 		"formatNotificationChannel":               FormatNotificationChannel,
 		"formatBalanceSql":                        FormatBalanceSql,
 		"formatCurrentBalance":                    FormatCurrentBalance,
-		"formatCurrency":                          FormatCurrency,
 		"formatElCurrency":                        FormatElCurrency,
 		"formatClCurrency":                        FormatClCurrency,
 		"formatEffectiveBalance":                  FormatEffectiveBalance,
@@ -229,7 +229,6 @@ func GetTemplateFuncs() template.FuncMap {
 		"formatPoolPerformance":            FormatPoolPerformance,
 		"formatTokenSymbolTitle":           FormatTokenSymbolTitle,
 		"formatTokenSymbol":                FormatTokenSymbol,
-		"formatTokenSymbolHTML":            FormatTokenSymbolHTML,
 		"dict": func(values ...interface{}) (map[string]interface{}, error) {
 			if len(values)%2 != 0 {
 				return nil, errors.New("invalid dict call")
@@ -360,12 +359,12 @@ func EpochToTime(epoch uint64) time.Time {
 
 // TimeToDay will return a days since genesis for an timestamp
 func TimeToDay(timestamp uint64) uint64 {
-	return uint64(time.Unix(int64(timestamp), 0).Sub(time.Unix(int64(Config.Chain.GenesisTimestamp), 0)).Hours() / 24)
-	// return time.Unix(int64(Config.Chain.GenesisTimestamp), 0).Add(time.Hour * time.Duration(24*int(day)))
+	const hoursInADay = float64(Day / time.Hour)
+	return uint64(time.Unix(int64(timestamp), 0).Sub(time.Unix(int64(Config.Chain.GenesisTimestamp), 0)).Hours() / hoursInADay)
 }
 
 func DayToTime(day int64) time.Time {
-	return time.Unix(int64(Config.Chain.GenesisTimestamp), 0).Add(time.Hour * time.Duration(24*int(day)))
+	return time.Unix(int64(Config.Chain.GenesisTimestamp), 0).Add(Day * time.Duration(day))
 }
 
 // TimeToEpoch will return an epoch for a given time
@@ -503,6 +502,7 @@ func ReadConfig(cfg *types.Config, path string) error {
 			EjectionBalance:                         mustParseUint(jr.Data.EjectionBalance),
 			MinPerEpochChurnLimit:                   mustParseUint(jr.Data.MinPerEpochChurnLimit),
 			ChurnLimitQuotient:                      mustParseUint(jr.Data.ChurnLimitQuotient),
+			MaxPerEpochActivationChurnLimit:         mustParseUint(jr.Data.MaxPerEpochActivationChurnLimit),
 			ProposerScoreBoost:                      mustParseUint(jr.Data.ProposerScoreBoost),
 			DepositChainID:                          mustParseUint(jr.Data.DepositChainID),
 			DepositNetworkID:                        mustParseUint(jr.Data.DepositNetworkID),
@@ -610,6 +610,57 @@ func ReadConfig(cfg *types.Config, path string) error {
 		}
 		cfg.Chain.ClConfig = *chainConfig
 	}
+
+	type MinimalELConfig struct {
+		ByzantiumBlock      *big.Int `yaml:"BYZANTIUM_FORK_BLOCK,omitempty"`      // Byzantium switch block (nil = no fork, 0 = already on byzantium)
+		ConstantinopleBlock *big.Int `yaml:"CONSTANTINOPLE_FORK_BLOCK,omitempty"` // Constantinople switch block (nil = no fork, 0 = already activated)
+	}
+	if cfg.Chain.ElConfigPath == "" {
+		minimalCfg := MinimalELConfig{}
+		switch cfg.Chain.Name {
+		case "mainnet":
+			err = yaml.Unmarshal([]byte(config.MainnetChainYml), &minimalCfg)
+		case "prater":
+			err = yaml.Unmarshal([]byte(config.PraterChainYml), &minimalCfg)
+		case "ropsten":
+			err = yaml.Unmarshal([]byte(config.RopstenChainYml), &minimalCfg)
+		case "sepolia":
+			err = yaml.Unmarshal([]byte(config.SepoliaChainYml), &minimalCfg)
+		case "gnosis":
+			err = yaml.Unmarshal([]byte(config.GnosisChainYml), &minimalCfg)
+		case "holesky":
+			err = yaml.Unmarshal([]byte(config.HoleskyChainYml), &minimalCfg)
+		default:
+			return fmt.Errorf("tried to set known chain-config, but unknown chain-name: %v (path: %v)", cfg.Chain.Name, cfg.Chain.ElConfigPath)
+		}
+		if err != nil {
+			return err
+		}
+		if minimalCfg.ByzantiumBlock == nil {
+			minimalCfg.ByzantiumBlock = big.NewInt(0)
+		}
+		if minimalCfg.ConstantinopleBlock == nil {
+			minimalCfg.ConstantinopleBlock = big.NewInt(0)
+		}
+		cfg.Chain.ElConfig = &params.ChainConfig{
+			ChainID:             big.NewInt(int64(cfg.Chain.Id)),
+			ByzantiumBlock:      minimalCfg.ByzantiumBlock,
+			ConstantinopleBlock: minimalCfg.ConstantinopleBlock,
+		}
+	} else {
+		f, err := os.Open(cfg.Chain.ElConfigPath)
+		if err != nil {
+			return fmt.Errorf("error opening EL Chain Config file %v: %w", cfg.Chain.ElConfigPath, err)
+		}
+		var chainConfig *params.ChainConfig
+		decoder := json.NewDecoder(f)
+		err = decoder.Decode(&chainConfig)
+		if err != nil {
+			return fmt.Errorf("error decoding EL Chain Config file %v: %v", cfg.Chain.ElConfigPath, err)
+		}
+		cfg.Chain.ElConfig = chainConfig
+	}
+
 	cfg.Chain.Name = cfg.Chain.ClConfig.ConfigName
 
 	if cfg.Chain.GenesisTimestamp == 0 {
@@ -715,6 +766,11 @@ func ReadConfig(cfg *types.Config, path string) error {
 
 	cfg.Chain.Id = cfg.Chain.ClConfig.DepositChainID
 
+	if cfg.RedisSessionStoreEndpoint == "" && cfg.RedisCacheEndpoint != "" {
+		logrus.Infof("using RedisCacheEndpoint %s as RedisSessionStoreEndpoint as no dedicated RedisSessionStoreEndpoint was provided", cfg.RedisCacheEndpoint)
+		cfg.RedisSessionStoreEndpoint = cfg.RedisCacheEndpoint
+	}
+
 	logrus.WithFields(logrus.Fields{
 		"genesisTimestamp":       cfg.Chain.GenesisTimestamp,
 		"genesisValidatorsRoot":  cfg.Chain.GenesisValidatorsRoot,
@@ -800,7 +856,7 @@ func IsApiRequest(r *http.Request) bool {
 
 var eth1AddressRE = regexp.MustCompile("^(0x)?[0-9a-fA-F]{40}$")
 var withdrawalCredentialsRE = regexp.MustCompile("^(0x)?00[0-9a-fA-F]{62}$")
-var withdrawalCredentialsAddressRE = regexp.MustCompile("^(0x)?010000000000000000000000[0-9a-fA-F]{40}$")
+var withdrawalCredentialsAddressRE = regexp.MustCompile("^(0x)?" + BeginningOfSetWithdrawalCredentials + "[0-9a-fA-F]{40}$")
 var eth1TxRE = regexp.MustCompile("^(0x)?[0-9a-fA-F]{64}$")
 var zeroHashRE = regexp.MustCompile("^(0x)?0+$")
 var hashRE = regexp.MustCompile("^(0x)?[0-9a-fA-F]{96}$")
@@ -1323,34 +1379,24 @@ func FormatPoolPerformance(val float64) template.HTML {
 }
 
 func FormatTokenSymbolTitle(symbol string) string {
-	urls := xurls.Relaxed.FindAllString(symbol, -1)
-
-	if len(urls) > 0 {
-		return fmt.Sprintf("The token symbol has been hidden as it contains a URL (%s) which might be a scam", symbol)
-	} else if symbol == "ETH" {
-		return fmt.Sprintf("The token symbol has been hidden as it contains a Token name (%s) which might be a scam", symbol)
+	if isMaliciousToken(symbol) {
+		return fmt.Sprintf("The token symbol (%s) has been hidden because it contains a URL or a confusable character", symbol)
 	}
 	return ""
 }
 
 func FormatTokenSymbol(symbol string) string {
-	urls := xurls.Relaxed.FindAllString(symbol, -1)
-
-	if len(urls) > 0 ||
-		symbol == "ETH" {
+	if isMaliciousToken(symbol) {
 		return "[hidden-symbol] ⚠️"
 	}
 	return symbol
 }
 
-func FormatTokenSymbolHTML(tmpl template.HTML) template.HTML {
-	tmplString := (string(tmpl))
-	symbolTitle := FormatTokenSymbolTitle(tmplString)
-
-	tmplString = FormatTokenSymbol(tmplString)
-	tmpl = template.HTML(strings.ReplaceAll(tmplString, `title=""`, fmt.Sprintf(`title="%s"`, symbolTitle)))
-
-	return tmpl
+func isMaliciousToken(symbol string) bool {
+	containsUrls := len(xurls.Relaxed.FindAllString(symbol, -1)) > 0
+	isConfusable := len(confusables.IsConfusable(symbol, false, []string{"LATIN", "COMMON"})) > 0
+	isMixedScript := confusables.IsMixedScript(symbol, nil)
+	return containsUrls || isConfusable || isMixedScript || strings.ToUpper(symbol) == "ETH"
 }
 
 func ReverseSlice[S ~[]E, E any](s S) {
@@ -1376,13 +1422,12 @@ func GetTimeToNextWithdrawal(distance uint64) time.Time {
 }
 
 func EpochsPerDay() uint64 {
-	day := time.Hour * 24
-	return (uint64(day.Seconds()) / Config.Chain.ClConfig.SlotsPerEpoch) / Config.Chain.ClConfig.SecondsPerSlot
+	return (uint64(Day.Seconds()) / Config.Chain.ClConfig.SlotsPerEpoch) / Config.Chain.ClConfig.SecondsPerSlot
 }
 
-func GetFirstAndLastEpochForDay(day uint64) (uint64, uint64) {
-	firstEpoch := day * EpochsPerDay()
-	lastEpoch := firstEpoch + EpochsPerDay() - 1
+func GetFirstAndLastEpochForDay(day uint64) (firstEpoch uint64, lastEpoch uint64) {
+	firstEpoch = day * EpochsPerDay()
+	lastEpoch = firstEpoch + EpochsPerDay() - 1
 	return firstEpoch, lastEpoch
 }
 
@@ -1739,4 +1784,34 @@ func GetCurrentFuncName() string {
 func GetParentFuncName() string {
 	pc, _, _, _ := runtime.Caller(2)
 	return runtime.FuncForPC(pc).Name()
+}
+
+// Returns true if the given block number is 0 and if it is (according to its timestamp) included in slot 0
+//
+// This is only true for networks that launch with active PoS at block 0 which requires
+//
+//   - Belatrix happening at epoch 0 (pre condition for merged networks)
+//   - Genesis for PoS to happen at the same timestamp as the first block
+func IsPoSBlock0(number uint64, ts int64) bool {
+	if number > 0 {
+		return false
+	}
+
+	if Config.Chain.ClConfig.BellatrixForkEpoch > 0 {
+		return false
+	}
+
+	return time.Unix(int64(Config.Chain.GenesisTimestamp-Config.Chain.ClConfig.GenesisDelay), 0).UTC().Equal(time.Unix(ts, 0))
+}
+
+func GetMaxAllowedDayRangeValidatorStats(validatorAmount int) int {
+	if validatorAmount > 100000 {
+		return 0 // exact day only
+	} else if validatorAmount > 10000 {
+		return 3
+	} else if validatorAmount > 1000 {
+		return 10
+	} else {
+		return math.MaxInt
+	}
 }

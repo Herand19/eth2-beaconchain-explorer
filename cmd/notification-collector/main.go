@@ -4,6 +4,7 @@ import (
 	"eth2-exporter/cache"
 	"eth2-exporter/db"
 	"eth2-exporter/metrics"
+	"eth2-exporter/price"
 	"eth2-exporter/services"
 	"eth2-exporter/types"
 	"eth2-exporter/utils"
@@ -69,6 +70,7 @@ func main() {
 			Port:         cfg.WriterDatabase.Port,
 			MaxOpenConns: cfg.WriterDatabase.MaxOpenConns,
 			MaxIdleConns: cfg.WriterDatabase.MaxIdleConns,
+			SSL:          cfg.WriterDatabase.SSL,
 		}, &types.DatabaseConfig{
 			Username:     cfg.ReaderDatabase.Username,
 			Password:     cfg.ReaderDatabase.Password,
@@ -77,7 +79,8 @@ func main() {
 			Port:         cfg.ReaderDatabase.Port,
 			MaxOpenConns: cfg.ReaderDatabase.MaxOpenConns,
 			MaxIdleConns: cfg.ReaderDatabase.MaxIdleConns,
-		})
+			SSL:          cfg.ReaderDatabase.SSL,
+		}, "pgx", "postgres")
 	}()
 
 	wg.Add(1)
@@ -91,6 +94,7 @@ func main() {
 			Port:         cfg.Frontend.WriterDatabase.Port,
 			MaxOpenConns: cfg.Frontend.WriterDatabase.MaxOpenConns,
 			MaxIdleConns: cfg.Frontend.WriterDatabase.MaxIdleConns,
+			SSL:          cfg.Frontend.WriterDatabase.SSL,
 		}, &types.DatabaseConfig{
 			Username:     cfg.Frontend.ReaderDatabase.Username,
 			Password:     cfg.Frontend.ReaderDatabase.Password,
@@ -99,7 +103,8 @@ func main() {
 			Port:         cfg.Frontend.ReaderDatabase.Port,
 			MaxOpenConns: cfg.Frontend.ReaderDatabase.MaxOpenConns,
 			MaxIdleConns: cfg.Frontend.ReaderDatabase.MaxIdleConns,
-		})
+			SSL:          cfg.Frontend.ReaderDatabase.SSL,
+		}, "pgx", "postgres")
 	}()
 
 	wg.Add(1)
@@ -123,6 +128,10 @@ func main() {
 			logrus.Infof("tiered Cache initialized, latest finalized epoch: %v", services.LatestFinalizedEpoch())
 		}()
 	}
+
+	logrus.Infof("initializing prices...")
+	price.Init(utils.Config.Chain.ClConfig.DepositChainID, utils.Config.Eth1ErigonEndpoint, utils.Config.Frontend.ClCurrency, utils.Config.Frontend.ElCurrency)
+	logrus.Infof("...prices initialized")
 
 	wg.Wait()
 

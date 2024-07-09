@@ -77,13 +77,18 @@ func Eth1Block(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// execute template based on whether block is pre or post merge
-	if eth1BlockPageData.Difficulty.Cmp(big.NewInt(0)) == 0 {
-		data := InitPageData(w, r, "blockchain", "/block", fmt.Sprintf("Block %d", number), blockTemplateFiles)
-		// Post Merge PoS Block
+	// special handling for networks that launch with PoS on block 0
+	isPosBlock0 := utils.IsPoSBlock0(number, eth1BlockPageData.Ts.Unix())
 
-		// calculate PoS slot number based on block timestamp
-		blockSlot := (uint64(eth1BlockPageData.Ts.Unix()) - utils.Config.Chain.GenesisTimestamp) / utils.Config.Chain.ClConfig.SecondsPerSlot
+	// execute template based on whether block is PoW or PoS
+	if eth1BlockPageData.Difficulty.Cmp(big.NewInt(0)) == 0 || isPosBlock0 {
+		// Post Merge PoS Block
+		data := InitPageData(w, r, "blockchain", "/block", fmt.Sprintf("Block %d", number), blockTemplateFiles)
+
+		blockSlot := uint64(0)
+		if !isPosBlock0 {
+			blockSlot = utils.TimeToSlot(uint64(eth1BlockPageData.Ts.Unix()))
+		}
 
 		// retrieve consensus data
 		blockPageData, err := GetSlotPageData(blockSlot)
@@ -107,7 +112,7 @@ func Eth1Block(w http.ResponseWriter, r *http.Request) {
 			return // an error has occurred and was processed
 		}
 	} else {
-		// Pre  Merge PoW Block
+		// Pre Merge PoW Block
 		data := InitPageData(w, r, "block", "/block", fmt.Sprintf("Block %d", eth1BlockPageData.Number), preMergeTemplateFiles)
 		data.Data = eth1BlockPageData
 
@@ -147,7 +152,13 @@ func GetExecutionBlockPageData(number uint64, limit int) (*types.Eth1BlockPageDa
 	lowestGasPrice := big.NewInt(1 << 62)
 	blobTxCount := 0
 	blobCount := 0
-	for _, tx := range block.Transactions {
+
+	contractInteractionTypes, err := db.BigtableClient.GetAddressContractInteractionsAtBlock(block)
+	if err != nil {
+		utils.LogError(err, "error getting contract states", 0)
+	}
+
+	for i, tx := range block.Transactions {
 		if tx.Type == 3 {
 			blobTxCount++
 			blobCount += len(tx.BlobVersionedHashes)
@@ -166,33 +177,28 @@ func GetExecutionBlockPageData(number uint64, limit int) (*types.Eth1BlockPageDa
 			}
 		}
 
+		contractCreation := tx.GetTo() == nil
 		// set tx to if tx is contract creation
-		if tx.To == nil && len(tx.Itx) >= 1 {
-			tx.To = tx.Itx[0].To
-			names[string(tx.To)] = "Contract Creation"
+		if contractCreation {
+			tx.To = tx.ContractAddress
 		}
 
-		method := "Transfer"
-		{
-			d := tx.GetData()
-			if len(d) > 3 {
-				m := d[:4]
-				invokesContract := len(tx.GetItx()) > 0 || tx.GetGasUsed() > 21000 || tx.GetErrorMsg() != ""
-				method = db.BigtableClient.GetMethodLabel(m, invokesContract)
-			}
+		var contractInteraction types.ContractInteractionType
+		if len(contractInteractionTypes) > i {
+			contractInteraction = contractInteractionTypes[i]
 		}
 
 		txs = append(txs, types.Eth1BlockPageTransaction{
 			Hash:          fmt.Sprintf("%#x", tx.Hash),
-			HashFormatted: utils.FormatAddressWithLimits(tx.Hash, "", false, "tx", 15, 18, true),
+			HashFormatted: utils.FormatTransactionHash(tx.Hash, tx.ErrorMsg == ""),
 			From:          fmt.Sprintf("%#x", tx.From),
 			FromFormatted: utils.FormatAddressWithLimits(tx.From, names[string(tx.From)], false, "address", 15, 20, true),
 			To:            fmt.Sprintf("%#x", tx.To),
-			ToFormatted:   utils.FormatAddressWithLimits(tx.To, names[string(tx.To)], names[string(tx.To)] == "Contract Creation" || len(method) > 0, "address", 15, 20, true),
+			ToFormatted:   utils.FormatAddressWithLimits(tx.To, db.BigtableClient.GetAddressLabel(names[string(tx.To)], contractInteraction), contractInteraction != types.CONTRACT_NONE, "address", 15, 20, true),
 			Value:         new(big.Int).SetBytes(tx.Value),
 			Fee:           txFee,
 			GasPrice:      effectiveGasPrice,
-			Method:        method,
+			Method:        db.BigtableClient.GetMethodLabel(tx.GetData(), contractInteraction),
 		})
 	}
 

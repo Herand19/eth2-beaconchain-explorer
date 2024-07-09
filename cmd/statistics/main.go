@@ -74,6 +74,7 @@ func main() {
 		Port:         cfg.WriterDatabase.Port,
 		MaxOpenConns: cfg.WriterDatabase.MaxOpenConns,
 		MaxIdleConns: cfg.WriterDatabase.MaxIdleConns,
+		SSL:          cfg.WriterDatabase.SSL,
 	}, &types.DatabaseConfig{
 		Username:     cfg.ReaderDatabase.Username,
 		Password:     cfg.ReaderDatabase.Password,
@@ -82,7 +83,8 @@ func main() {
 		Port:         cfg.ReaderDatabase.Port,
 		MaxOpenConns: cfg.ReaderDatabase.MaxOpenConns,
 		MaxIdleConns: cfg.ReaderDatabase.MaxIdleConns,
-	})
+		SSL:          cfg.ReaderDatabase.SSL,
+	}, "pgx", "postgres")
 	defer db.ReaderDb.Close()
 	defer db.WriterDb.Close()
 
@@ -94,6 +96,7 @@ func main() {
 		Port:         cfg.Frontend.WriterDatabase.Port,
 		MaxOpenConns: cfg.Frontend.WriterDatabase.MaxOpenConns,
 		MaxIdleConns: cfg.Frontend.WriterDatabase.MaxIdleConns,
+		SSL:          cfg.Frontend.WriterDatabase.SSL,
 	}, &types.DatabaseConfig{
 		Username:     cfg.Frontend.ReaderDatabase.Username,
 		Password:     cfg.Frontend.ReaderDatabase.Password,
@@ -102,7 +105,8 @@ func main() {
 		Port:         cfg.Frontend.ReaderDatabase.Port,
 		MaxOpenConns: cfg.Frontend.ReaderDatabase.MaxOpenConns,
 		MaxIdleConns: cfg.Frontend.ReaderDatabase.MaxIdleConns,
-	})
+		SSL:          cfg.Frontend.ReaderDatabase.SSL,
+	}, "pgx", "postgres")
 	defer db.FrontendReaderDB.Close()
 	defer db.FrontendWriterDB.Close()
 
@@ -303,15 +307,28 @@ func statisticsLoop(client rpc.Client) {
 		}
 
 		if opt.statisticsGraffitiToggle {
-			var lastDay int64
-			err := db.WriterDb.Get(&lastDay, "select COALESCE(max(day), 0) from graffiti_stats")
+			graffitiStatsStatus := []struct {
+				Day    uint64
+				Status bool
+			}{}
+			err := db.WriterDb.Select(&graffitiStatsStatus, "select day, status from graffiti_stats_status")
 			if err != nil {
-				logrus.Errorf("error retreiving latest exported day from graffiti_stats: %v", err)
+				logrus.Errorf("error retrieving graffitiStatsStatus: %v", err)
 			} else {
-				nextDay := lastDay + 1
-				err = db.WriteGraffitiStatisticsForDay(nextDay)
-				if err != nil {
-					logrus.Errorf("error exporting graffiti-stats for day %v: %v", nextDay, err)
+				graffitiStatsStatusMap := map[uint64]bool{}
+				for _, s := range graffitiStatsStatus {
+					graffitiStatsStatusMap[s.Day] = s.Status
+				}
+				for day := uint64(0); day <= currentDay; day++ {
+					if !graffitiStatsStatusMap[day] {
+						logrus.Infof("exporting graffiti-stats for day %v", day)
+						err = db.WriteGraffitiStatisticsForDay(int64(day))
+						if err != nil {
+							logrus.Errorf("error exporting graffiti-stats for day %v: %v", day, err)
+							loopError = err
+							break
+						}
+					}
 				}
 			}
 		}

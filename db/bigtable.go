@@ -550,11 +550,9 @@ func (bigtable *Bigtable) SaveValidatorBalances(epoch uint64, validators []*type
 
 		balanceEncoded := make([]byte, 8)
 		binary.LittleEndian.PutUint64(balanceEncoded, validator.Balance)
+		effectiveBalanceEncoded := uint8(validator.EffectiveBalance / 1e9) // we can encode the effective balance in 1 byte as it is capped at 32ETH and only decrements in 1 ETH steps
 
-		effectiveBalanceEncoded := make([]byte, 8)
-		binary.LittleEndian.PutUint64(effectiveBalanceEncoded, validator.EffectiveBalance)
-
-		combined := append(balanceEncoded, effectiveBalanceEncoded...)
+		combined := append(balanceEncoded, effectiveBalanceEncoded)
 		mut := &gcp_bigtable.Mutation{}
 		mut.Set(VALIDATOR_BALANCES_FAMILY, "b", ts, combined)
 		key := fmt.Sprintf("%s:%s:%s:%s", bigtable.chainId, bigtable.validatorIndexToKey(validator.Index), VALIDATOR_BALANCES_FAMILY, epochKey)
@@ -868,13 +866,17 @@ func (bigtable *Bigtable) getValidatorBalanceHistoryV2(validators []uint64, star
 				resMux.Unlock()
 
 				for _, ri := range r[VALIDATOR_BALANCES_FAMILY] {
-
 					balances := ri.Value
 
 					balanceBytes := balances[0:8]
-					effectiveBalanceBytes := balances[8:16]
 					balance := binary.LittleEndian.Uint64(balanceBytes)
-					effectiveBalance := binary.LittleEndian.Uint64(effectiveBalanceBytes)
+					var effectiveBalance uint64
+					if len(balances) == 9 { // in new schema the effective balance is encoded in 1 byte
+						effectiveBalance = uint64(balances[8]) * 1e9
+					} else {
+						effectiveBalanceBytes := balances[8:16]
+						effectiveBalance = binary.LittleEndian.Uint64(effectiveBalanceBytes)
+					}
 
 					resMux.Lock()
 					res[validator] = append(res[validator], &types.ValidatorBalance{
@@ -1608,6 +1610,11 @@ func (bigtable *Bigtable) getValidatorMissedAttestationHistoryV1(validators []ui
 	return res, nil
 }
 
+// GetValidatorSyncDutiesHistory returns the sync participation status for the given validators ranging from startSlot to endSlot (both inclusive)
+//
+// The returned map uses the following keys: [validatorIndex][slot]
+//
+// The function is able to handle both V1 and V2 schema based on the configured v2SchemaCutOffEpoch
 func (bigtable *Bigtable) GetValidatorSyncDutiesHistory(validators []uint64, startSlot uint64, endSlot uint64) (map[uint64]map[uint64]*types.ValidatorSyncParticipation, error) {
 	if endSlot/utils.Config.Chain.ClConfig.SlotsPerEpoch < bigtable.v2SchemaCutOffEpoch {
 		if startSlot/utils.Config.Chain.ClConfig.SlotsPerEpoch == 0 {
@@ -2302,7 +2309,7 @@ func (bigtable *Bigtable) getValidatorIncomeDetailsHistoryV2(validators []uint64
 		startEpoch = 0
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*180)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute*3)
 	defer cancel()
 
 	res := make(map[uint64]map[uint64]*itypes.ValidatorEpochIncome, len(validators))
@@ -2378,7 +2385,7 @@ func (bigtable *Bigtable) getValidatorIncomeDetailsHistoryV1(validators []uint64
 		startEpoch = 0
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*180)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute*3)
 	defer cancel()
 
 	ranges := bigtable.getEpochRangesV1(startEpoch, endEpoch)
@@ -2530,7 +2537,7 @@ func (bigtable *Bigtable) GetTotalValidatorIncomeDetailsHistory(startEpoch uint6
 		startEpoch = 0
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*180)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute*3)
 	defer cancel()
 
 	res := make(map[uint64]*itypes.ValidatorEpochIncome, endEpoch-startEpoch+1)
@@ -2672,6 +2679,9 @@ func GetCurrentDayClIncome(validator_indices []uint64) (map[uint64]int64, error)
 	dayIncome := make(map[uint64]int64)
 	lastDay, err := GetLastExportedStatisticDay()
 	if err != nil {
+		if err == ErrNoStats {
+			return dayIncome, nil
+		}
 		return dayIncome, err
 	}
 

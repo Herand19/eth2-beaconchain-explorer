@@ -143,6 +143,7 @@ type Stats struct {
 	ActiveValidatorCount           *uint64 `db:"count"`
 	PendingValidatorCount          *uint64 `db:"count"`
 	ValidatorChurnLimit            *uint64
+	ValidatorActivationChurnLimit  *uint64
 	LatestValidatorWithdrawalIndex *uint64 `db:"index"`
 	WithdrawableValidatorCount     *uint64 `db:"count"`
 	// WithdrawableAmount             *uint64 `db:"amount"`
@@ -606,7 +607,7 @@ type VotesVisChartData struct {
 	Validators pq.Int64Array `db:"validators" json:"validators"`
 }
 
-// BlockPageData is a struct block data used in the block page
+// BlockPageData is a struct block data used in the block/slot page
 type BlockPageData struct {
 	Epoch                  uint64  `db:"epoch"`
 	EpochFinalized         bool    `db:"epoch_finalized"`
@@ -886,7 +887,7 @@ type SearchAheadSlotsResult []struct {
 
 // SearchAheadBlockssResult is a struct to hold the search ahead block results
 type SearchAheadBlocksResult []struct {
-	Block uint64 `json:"block,omitempty"`
+	Block string `json:"block,omitempty"`
 	Hash  string `json:"hash,omitempty"`
 }
 
@@ -1318,6 +1319,12 @@ type MobilePricing struct {
 	Plankton             string
 	Goldfish             string
 	Whale                string
+	Guppy                string
+	GuppyYearly          string
+	Dolphin              string
+	DolphinYearly        string
+	Orca                 string
+	OrcaYearly           string
 	ActiveMobileStoreSub bool
 }
 
@@ -1325,6 +1332,13 @@ type StakeWithUsPageData struct {
 	FlashMessage string
 	RecaptchaKey string
 }
+
+type PasswordResetNotAllowedError struct{}
+
+func (e *PasswordResetNotAllowedError) Error() string {
+	return "password reset not allowed for this account"
+}
+
 type RateLimitError struct {
 	TimeLeft time.Duration
 }
@@ -1593,6 +1607,15 @@ type Eth1AddressPageData struct {
 	Tabs               []Eth1AddressPageTabs
 }
 
+type ContractInteractionType uint8
+
+const (
+	CONTRACT_NONE        ContractInteractionType = 0
+	CONTRACT_CREATION    ContractInteractionType = 1
+	CONTRACT_PRESENT     ContractInteractionType = 2
+	CONTRACT_DESTRUCTION ContractInteractionType = 3
+)
+
 type Eth1AddressPageTabs struct {
 	Id   string
 	Href string
@@ -1670,6 +1693,19 @@ type Eth1TokenPageData struct {
 	HoldersTable     *DataTableResponse
 }
 
+type ITransaction struct {
+	From      template.HTML
+	To        template.HTML
+	Amount    template.HTML
+	TracePath template.HTML
+	Advanced  bool
+	Gas       struct {
+		Limit uint64
+		// Usage    uint64
+		// UsedPerc float64
+	}
+}
+
 type Transfer struct {
 	From   template.HTML
 	To     template.HTML
@@ -1691,7 +1727,7 @@ type EpochInfo struct {
 type Eth1TxData struct {
 	From         common.Address
 	To           *common.Address
-	InternalTxns []Transfer
+	InternalTxns []ITransaction
 	FromName     string
 	ToName       string
 	Gas          struct {

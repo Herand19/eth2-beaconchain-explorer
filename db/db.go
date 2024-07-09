@@ -11,6 +11,7 @@ import (
 	"eth2-exporter/utils"
 	"fmt"
 	"math/big"
+	"net"
 	"regexp"
 	"sort"
 	"strconv"
@@ -48,6 +49,8 @@ const WithdrawalsQueryLimit = 10000
 const BlsChangeQueryLimit = 10000
 const MaxSqlInteger = 2147483647
 
+const DefaultInfScrollRows = 25
+
 var ErrNoStats = errors.New("no stats available")
 
 func dbTestConnection(dbConn *sqlx.DB, dataBaseName string) {
@@ -68,8 +71,7 @@ func dbTestConnection(dbConn *sqlx.DB, dataBaseName string) {
 	dbConnectionTimeout.Stop()
 }
 
-func mustInitDB(writer *types.DatabaseConfig, reader *types.DatabaseConfig) (*sqlx.DB, *sqlx.DB) {
-
+func mustInitDB(writer *types.DatabaseConfig, reader *types.DatabaseConfig, driverName string, databaseBrand string) (*sqlx.DB, *sqlx.DB) {
 	if writer.MaxOpenConns == 0 {
 		writer.MaxOpenConns = 50
 	}
@@ -90,15 +92,30 @@ func mustInitDB(writer *types.DatabaseConfig, reader *types.DatabaseConfig) (*sq
 		reader.MaxIdleConns = reader.MaxOpenConns
 	}
 
-	logger.Infof("initializing writer db connection to %v with %v/%v conn limit", writer.Host, writer.MaxIdleConns, writer.MaxOpenConns)
-	dbConnWriter, err := sqlx.Open("pgx", fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=disable", writer.Username, writer.Password, writer.Host, writer.Port, writer.Name))
-	if err != nil {
-		utils.LogFatal(err, "error getting Connection Writer database", 0)
+	var sslParam string
+	if driverName == "clickhouse" {
+		sslParam = "secure=false"
+		if writer.SSL {
+			sslParam = "secure=true"
+		}
+		// debug
+		// sslParam += "&debug=true"
+	} else {
+		sslParam = "sslmode=disable"
+		if writer.SSL {
+			sslParam = "sslmode=require"
+		}
 	}
 
-	dbTestConnection(dbConnWriter, "database")
+	logger.Infof("connecting to %s database %s:%s/%s as writer with %d/%d max open/idle connections", databaseBrand, writer.Host, writer.Port, writer.Name, writer.MaxOpenConns, writer.MaxIdleConns)
+	dbConnWriter, err := sqlx.Open(driverName, fmt.Sprintf("%s://%s:%s@%s/%s?%s", databaseBrand, writer.Username, writer.Password, net.JoinHostPort(writer.Host, writer.Port), writer.Name, sslParam))
+	if err != nil {
+		logger.Fatal(err, "error getting Connection Writer database", 0)
+	}
+
+	dbTestConnection(dbConnWriter, fmt.Sprintf("database %v:%v/%v", writer.Host, writer.Port, writer.Name))
 	dbConnWriter.SetConnMaxIdleTime(time.Second * 30)
-	dbConnWriter.SetConnMaxLifetime(time.Second * 60)
+	dbConnWriter.SetConnMaxLifetime(time.Minute)
 	dbConnWriter.SetMaxOpenConns(writer.MaxOpenConns)
 	dbConnWriter.SetMaxIdleConns(writer.MaxIdleConns)
 
@@ -106,22 +123,36 @@ func mustInitDB(writer *types.DatabaseConfig, reader *types.DatabaseConfig) (*sq
 		return dbConnWriter, dbConnWriter
 	}
 
-	logger.Infof("initializing reader db connection to %v with %v/%v conn limit", writer.Host, reader.MaxIdleConns, reader.MaxOpenConns)
-	dbConnReader, err := sqlx.Open("pgx", fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=disable", reader.Username, reader.Password, reader.Host, reader.Port, reader.Name))
-	if err != nil {
-		utils.LogFatal(err, "error getting Connection Reader database", 0)
+	if driverName == "clickhouse" {
+		sslParam = "secure=false"
+		if writer.SSL {
+			sslParam = "secure=true"
+		}
+		// debug
+		// sslParam += "&debug=true"
+	} else {
+		sslParam = "sslmode=disable"
+		if writer.SSL {
+			sslParam = "sslmode=require"
+		}
 	}
 
-	dbTestConnection(dbConnReader, "read replica database")
+	logger.Infof("connecting to %s database %s:%s/%s as reader with %d/%d max open/idle connections", databaseBrand, reader.Host, reader.Port, reader.Name, reader.MaxOpenConns, reader.MaxIdleConns)
+	dbConnReader, err := sqlx.Open(driverName, fmt.Sprintf("%s://%s:%s@%s/%s?%s", databaseBrand, reader.Username, reader.Password, net.JoinHostPort(reader.Host, reader.Port), reader.Name, sslParam))
+	if err != nil {
+		logger.Fatal(err, "error getting Connection Reader database", 0)
+	}
+
+	dbTestConnection(dbConnReader, fmt.Sprintf("database %v:%v/%v", writer.Host, writer.Port, writer.Name))
 	dbConnReader.SetConnMaxIdleTime(time.Second * 30)
-	dbConnReader.SetConnMaxLifetime(time.Second * 60)
+	dbConnReader.SetConnMaxLifetime(time.Minute)
 	dbConnReader.SetMaxOpenConns(reader.MaxOpenConns)
 	dbConnReader.SetMaxIdleConns(reader.MaxIdleConns)
 	return dbConnWriter, dbConnReader
 }
 
-func MustInitDB(writer *types.DatabaseConfig, reader *types.DatabaseConfig) {
-	WriterDb, ReaderDb = mustInitDB(writer, reader)
+func MustInitDB(writer *types.DatabaseConfig, reader *types.DatabaseConfig, driverName string, databaseBrand string) {
+	WriterDb, ReaderDb = mustInitDB(writer, reader, driverName, databaseBrand)
 }
 
 func ApplyEmbeddedDbSchema(version int64) error {
@@ -1143,7 +1174,7 @@ func SaveValidators(epoch uint64, validators []*types.Validator, client rpc.Clie
 
 		foundBalance := uint64(0)
 		if balance[newValidator.Validatorindex] == nil || len(balance[newValidator.Validatorindex]) == 0 {
-			logger.Errorf("no activation epoch balance found for validator %v for epoch %v in bigtable, trying node", newValidator.Validatorindex, newValidator.ActivationEpoch)
+			logger.Warnf("no activation epoch balance found for validator %v for epoch %v in bigtable, trying node", newValidator.Validatorindex, newValidator.ActivationEpoch)
 
 			if balanceCache[newValidator.ActivationEpoch] == nil {
 				balances, err := client.GetBalancesForEpoch(int64(newValidator.ActivationEpoch))
@@ -1210,6 +1241,15 @@ func saveBlocks(blocks map[uint64]map[string]*types.Block, tx *sqlx.Tx, forceSlo
 	if err != nil {
 		return err
 	}
+
+	stmtExecutionPayload, err := tx.Prepare(`
+		INSERT INTO execution_payloads (block_hash)
+		VALUES ($1)
+		ON CONFLICT (block_hash) DO NOTHING`)
+	if err != nil {
+		return err
+	}
+	defer stmtExecutionPayload.Close()
 
 	stmtBlock, err := tx.Prepare(`
 		INSERT INTO blocks (epoch, slot, blockroot, parentroot, stateroot, signature, randaoreveal, graffiti, graffiti_text, eth1data_depositroot, eth1data_depositcount, eth1data_blockhash, syncaggregate_bits, syncaggregate_signature, proposerslashingscount, attesterslashingscount, attestationscount, depositscount, withdrawalcount, voluntaryexitscount, syncaggregate_participation, proposer, status, exec_parent_hash, exec_fee_recipient, exec_state_root, exec_receipts_root, exec_logs_bloom, exec_random, exec_block_number, exec_gas_limit, exec_gas_used, exec_timestamp, exec_extra_data, exec_base_fee_per_gas, exec_block_hash, exec_transactions_count, exec_blob_gas_used, exec_excess_blob_gas, exec_blob_transactions_count)
@@ -1353,43 +1393,57 @@ func saveBlocks(blocks map[uint64]map[string]*types.Block, tx *sqlx.Tx, forceSlo
 				// blockLog = blockLog.WithField("syncParticipation", b.SyncAggregate.SyncAggregateParticipation)
 			}
 
-			parentHash := []byte{}
-			feeRecipient := []byte{}
-			stateRoot := []byte{}
-			receiptRoot := []byte{}
-			logsBloom := []byte{}
-			random := []byte{}
-			blockNumber := uint64(0)
-			gasLimit := uint64(0)
-			gasUsed := uint64(0)
-			timestamp := uint64(0)
-			extraData := []byte{}
-			baseFeePerGas := uint64(0)
-			blockHash := []byte{}
-			txCount := 0
-			withdrawalCount := 0
-			blobGasUsed := uint64(0)
-			excessBlobGas := uint64(0)
-			blobTxCount := 0
+			type exectionPayloadData struct {
+				ParentHash      []byte
+				FeeRecipient    []byte
+				StateRoot       []byte
+				ReceiptRoot     []byte
+				LogsBloom       []byte
+				Random          []byte
+				BlockNumber     *uint64
+				GasLimit        *uint64
+				GasUsed         *uint64
+				Timestamp       *uint64
+				ExtraData       []byte
+				BaseFeePerGas   *uint64
+				BlockHash       []byte
+				TxCount         *int64
+				WithdrawalCount *int64
+				BlobGasUsed     *uint64
+				ExcessBlobGas   *uint64
+				BlobTxCount     *int64
+			}
+
+			execData := new(exectionPayloadData)
+
 			if b.ExecutionPayload != nil {
-				parentHash = b.ExecutionPayload.ParentHash
-				feeRecipient = b.ExecutionPayload.FeeRecipient
-				stateRoot = b.ExecutionPayload.StateRoot
-				receiptRoot = b.ExecutionPayload.ReceiptsRoot
-				logsBloom = b.ExecutionPayload.LogsBloom
-				random = b.ExecutionPayload.Random
-				blockNumber = b.ExecutionPayload.BlockNumber
-				gasLimit = b.ExecutionPayload.GasLimit
-				gasUsed = b.ExecutionPayload.GasUsed
-				timestamp = b.ExecutionPayload.Timestamp
-				extraData = b.ExecutionPayload.ExtraData
-				baseFeePerGas = b.ExecutionPayload.BaseFeePerGas
-				blockHash = b.ExecutionPayload.BlockHash
-				txCount = len(b.ExecutionPayload.Transactions)
-				withdrawalCount = len(b.ExecutionPayload.Withdrawals)
-				blobGasUsed = b.ExecutionPayload.BlobGasUsed
-				excessBlobGas = b.ExecutionPayload.ExcessBlobGas
-				blobTxCount = len(b.BlobKZGCommitments)
+				txCount := int64(len(b.ExecutionPayload.Transactions))
+				withdrawalCount := int64(len(b.ExecutionPayload.Withdrawals))
+				blobTxCount := int64(len(b.BlobKZGCommitments))
+				execData = &exectionPayloadData{
+					ParentHash:      b.ExecutionPayload.ParentHash,
+					FeeRecipient:    b.ExecutionPayload.FeeRecipient,
+					StateRoot:       b.ExecutionPayload.StateRoot,
+					ReceiptRoot:     b.ExecutionPayload.ReceiptsRoot,
+					LogsBloom:       b.ExecutionPayload.LogsBloom,
+					Random:          b.ExecutionPayload.Random,
+					BlockNumber:     &b.ExecutionPayload.BlockNumber,
+					GasLimit:        &b.ExecutionPayload.GasLimit,
+					GasUsed:         &b.ExecutionPayload.GasUsed,
+					Timestamp:       &b.ExecutionPayload.Timestamp,
+					ExtraData:       b.ExecutionPayload.ExtraData,
+					BaseFeePerGas:   &b.ExecutionPayload.BaseFeePerGas,
+					BlockHash:       b.ExecutionPayload.BlockHash,
+					TxCount:         &txCount,
+					WithdrawalCount: &withdrawalCount,
+					BlobGasUsed:     &b.ExecutionPayload.BlobGasUsed,
+					ExcessBlobGas:   &b.ExecutionPayload.ExcessBlobGas,
+					BlobTxCount:     &blobTxCount,
+				}
+				_, err = stmtExecutionPayload.Exec(execData.BlockHash)
+				if err != nil {
+					return fmt.Errorf("error executing stmtExecutionPayload for block %v: %w", b.Slot, err)
+				}
 			}
 			_, err = stmtBlock.Exec(
 				b.Slot/utils.Config.Chain.ClConfig.SlotsPerEpoch,
@@ -1410,28 +1464,28 @@ func saveBlocks(blocks map[uint64]map[string]*types.Block, tx *sqlx.Tx, forceSlo
 				len(b.AttesterSlashings),
 				len(b.Attestations),
 				len(b.Deposits),
-				withdrawalCount,
+				execData.WithdrawalCount,
 				len(b.VoluntaryExits),
 				syncAggParticipation,
 				b.Proposer,
 				strconv.FormatUint(b.Status, 10),
-				parentHash,
-				feeRecipient,
-				stateRoot,
-				receiptRoot,
-				logsBloom,
-				random,
-				blockNumber,
-				gasLimit,
-				gasUsed,
-				timestamp,
-				extraData,
-				baseFeePerGas,
-				blockHash,
-				txCount,
-				blobGasUsed,
-				excessBlobGas,
-				blobTxCount,
+				execData.ParentHash,
+				execData.FeeRecipient,
+				execData.StateRoot,
+				execData.ReceiptRoot,
+				execData.LogsBloom,
+				execData.Random,
+				execData.BlockNumber,
+				execData.GasLimit,
+				execData.GasUsed,
+				execData.Timestamp,
+				execData.ExtraData,
+				execData.BaseFeePerGas,
+				execData.BlockHash,
+				execData.TxCount,
+				execData.BlobGasUsed,
+				execData.ExcessBlobGas,
+				execData.BlobTxCount,
 			)
 			if err != nil {
 				return fmt.Errorf("error executing stmtBlocks for block %v: %w", b.Slot, err)
@@ -2202,30 +2256,41 @@ func GetEpochWithdrawalsTotal(epoch uint64) (total uint64, err error) {
 	return
 }
 
-// GetAddressWithdrawals returns the withdrawals for an address
-func GetAddressWithdrawals(address []byte, limit uint64, pageToken string) ([]*types.Withdrawals, string, error) {
+// GetAddressWithdrawalTableData returns the withdrawal data for an address
+func GetAddressWithdrawalTableData(address []byte, pageToken string, currency string) (*types.DataTableResponse, error) {
 	const endOfWithdrawalsData = "End of withdrawals data"
+	const limit = DefaultInfScrollRows
 
 	var withdrawals []*types.Withdrawals
-	if limit == 0 {
-		limit = 100
+	var withdrawalIndex uint64
+	var err error
+	var nextPageToken string
+	var emptyData = &types.DataTableResponse{
+		Data:        make([][]interface{}, 0),
+		PagingToken: "",
 	}
 
-	var withdrawalindex uint64
-	var err error
+	tmr := time.AfterFunc(REPORT_TIMEOUT, func() {
+		logger.WithFields(logrus.Fields{
+			"address":   address,
+			"pageToken": pageToken,
+		}).Warnf("%s call took longer than %v", utils.GetCurrentFuncName(), REPORT_TIMEOUT)
+	})
+	defer tmr.Stop()
+
 	if pageToken == "" {
 		// Start from the beginning
-		withdrawalindex, err = GetTotalWithdrawals()
+		withdrawalIndex, err = GetTotalWithdrawals()
 		if err != nil {
-			return nil, "", fmt.Errorf("error getting total withdrawals for address: %x, %w", address, err)
+			return emptyData, fmt.Errorf("error getting total withdrawals for address: %x, %w", address, err)
 		}
 	} else if pageToken == endOfWithdrawalsData {
 		// Last page already shown, end the infinite scroll
-		return nil, "", nil
+		return emptyData, nil
 	} else {
-		withdrawalindex, err = strconv.ParseUint(pageToken, 10, 64)
+		withdrawalIndex, err = strconv.ParseUint(pageToken, 10, 64)
 		if err != nil {
-			return nil, "", fmt.Errorf("error parsing page token: %w", err)
+			return emptyData, fmt.Errorf("error parsing page token: %w", err)
 		}
 	}
 
@@ -2239,22 +2304,37 @@ func GetAddressWithdrawals(address []byte, limit uint64, pageToken string) ([]*t
 	FROM blocks_withdrawals w
 	INNER JOIN blocks b ON b.blockroot = w.block_root AND b.status = '1'
 	WHERE w.address = $1 AND w.withdrawalindex <= $2
-	ORDER BY w.withdrawalindex DESC LIMIT $3`, address, withdrawalindex, limit+1)
+	ORDER BY w.withdrawalindex DESC LIMIT $3`, address, withdrawalIndex, limit+1)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return withdrawals, "", nil
+			return emptyData, nil
 		}
-		return nil, "", fmt.Errorf("error getting blocks_withdrawals for address: %x: %w", address, err)
+		return emptyData, fmt.Errorf("error getting blocks_withdrawals for address: %x: %w", address, err)
 	}
-
 	// Get the next page token and remove that withdrawal from the results
-	nextPageToken := endOfWithdrawalsData
+	nextPageToken = endOfWithdrawalsData
 	if len(withdrawals) == int(limit+1) {
 		nextPageToken = fmt.Sprintf("%d", withdrawals[limit].Index)
 		withdrawals = withdrawals[:limit]
 	}
 
-	return withdrawals, nextPageToken, nil
+	withdrawalsData := make([][]interface{}, len(withdrawals))
+	for i, w := range withdrawals {
+		withdrawalsData[i] = []interface{}{
+			utils.FormatEpoch(utils.EpochOfSlot(w.Slot)),
+			utils.FormatBlockSlot(w.Slot),
+			utils.FormatTimestamp(utils.SlotToTime(w.Slot).Unix()),
+			utils.FormatValidator(w.ValidatorIndex),
+			utils.FormatClCurrency(w.Amount, currency, 6, true, false, false, true),
+		}
+	}
+
+	data := &types.DataTableResponse{
+		Data:        withdrawalsData,
+		PagingToken: nextPageToken,
+	}
+
+	return data, nil
 }
 
 func GetEpochWithdrawals(epoch uint64) ([]*types.WithdrawalsNotification, error) {
@@ -2364,6 +2444,10 @@ func GetValidatorsWithdrawalsByEpoch(validator []uint64, startEpoch uint64, endE
 
 // GetAddressWithdrawalsTotal returns the total withdrawals for an address
 func GetAddressWithdrawalsTotal(address []byte) (uint64, error) {
+	// #TODO: BIDS-2879
+	if true {
+		return 0, nil
+	}
 	var total uint64
 
 	err := ReaderDb.Get(&total, `
@@ -3124,6 +3208,9 @@ func GetBlockStatus(block int64, latestFinalizedEpoch uint64, epochInfo *types.E
 		block, latestFinalizedEpoch)
 }
 
+// Returns the participation rate for every slot between startSlot and endSlot (both inclusive) as a map with the slot as key
+//
+// If a slot is missed, the map will not contain an entry for it
 func GetSyncParticipationBySlotRange(startSlot, endSlot uint64) (map[uint64]uint64, error) {
 
 	rows := []struct {

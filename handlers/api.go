@@ -257,6 +257,34 @@ func ApiEthStoreDay(w http.ResponseWriter, r *http.Request) {
 	returnQueryResults(rows, w, r, addDayTime)
 }
 
+// ApiLatestState godoc
+// @Summary Get the latest state of the network
+// @Tags Network
+// @Description Returns information on the current state of the network
+// @Produce  json
+// @Failure 400 {object} types.ApiResponse "Failure"
+// @Failure 500 {object} types.ApiResponse "Server Error"
+// @Router /api/v1/latestState [get]
+func ApiLatestState(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", fmt.Sprintf("public, max-age=%d", utils.Config.Chain.ClConfig.SecondsPerSlot)) // set local cache to the seconds per slot interval
+
+	data := services.LatestState()
+	data.Rates = services.GetRates(GetCurrency(r))
+	userAgent := r.Header.Get("User-Agent")
+	userAgent = strings.ToLower(userAgent)
+	if strings.Contains(userAgent, "android") || strings.Contains(userAgent, "iphone") || strings.Contains(userAgent, "windows phone") {
+		data.Rates.MainCurrencyPriceFormatted = utils.KFormatterEthPrice(uint64(data.Rates.MainCurrencyPrice))
+	}
+
+	err := json.NewEncoder(w).Encode(data)
+	if err != nil {
+		logger.Errorf("error sending latest index page data: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+}
+
 // ApiEpoch godoc
 // @Summary Get epoch by number, latest, finalized
 // @Tags Epoch
@@ -297,7 +325,7 @@ func ApiEpoch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := db.ReaderDb.Query(`SELECT attestationscount, attesterslashingscount, averagevalidatorbalance, blockscount, depositscount, eligibleether, epoch, (epoch <= $2) AS finalized, globalparticipationrate, proposerslashingscount, rewards_exported, totalvalidatorbalance, validatorscount, voluntaryexitscount, votedether, withdrawalcount, 
+	rows, err := db.ReaderDb.Query(`SELECT attestationscount, attesterslashingscount, averagevalidatorbalance, blockscount, depositscount, eligibleether, epoch, (epoch <= $2) AS finalized, globalparticipationrate, proposerslashingscount, rewards_exported, totalvalidatorbalance, validatorscount, voluntaryexitscount, votedether, COALESCE(withdrawalcount,0) as withdrawalcount, 
 		(SELECT COUNT(*) FROM blocks WHERE epoch = $1 AND status = '0') as scheduledblocks,
 		(SELECT COUNT(*) FROM blocks WHERE epoch = $1 AND status = '1') as proposedblocks,
 		(SELECT COUNT(*) FROM blocks WHERE epoch = $1 AND status = '2') as missedblocks,
@@ -355,7 +383,7 @@ func ApiEpochSlots(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := db.ReaderDb.Query("SELECT attestationscount, attesterslashingscount, blockroot, depositscount, epoch, eth1data_blockhash, eth1data_depositcount, eth1data_depositroot, exec_base_fee_per_gas, exec_block_hash, exec_block_number, exec_extra_data, exec_fee_recipient, exec_gas_limit, exec_gas_used, exec_logs_bloom, exec_parent_hash, exec_random, exec_receipts_root, exec_state_root, exec_timestamp, exec_transactions_count, graffiti, graffiti_text, parentroot, proposer, proposerslashingscount, randaoreveal, signature, slot, stateroot, status, syncaggregate_bits, syncaggregate_participation, syncaggregate_signature, voluntaryexitscount, withdrawalcount FROM blocks WHERE epoch = $1 ORDER BY slot", epoch)
+	rows, err := db.ReaderDb.Query("SELECT attestationscount, attesterslashingscount, blockroot, depositscount, epoch, eth1data_blockhash, eth1data_depositcount, eth1data_depositroot, exec_base_fee_per_gas, exec_block_hash, exec_block_number, exec_extra_data, exec_fee_recipient, exec_gas_limit, exec_gas_used, exec_logs_bloom, exec_parent_hash, exec_random, exec_receipts_root, exec_state_root, exec_timestamp, COALESCE(exec_transactions_count,0) as exec_transactions_count, graffiti, graffiti_text, parentroot, proposer, proposerslashingscount, randaoreveal, signature, slot, stateroot, status, syncaggregate_bits, syncaggregate_participation, syncaggregate_signature, voluntaryexitscount, COALESCE(withdrawalcount,0) as withdrawalcount FROM blocks WHERE epoch = $1 ORDER BY slot", epoch)
 	if err != nil {
 		sendServerErrorResponse(w, r.URL.String(), "could not retrieve db results")
 		return
@@ -434,7 +462,7 @@ func ApiSlots(w http.ResponseWriter, r *http.Request) {
 		blocks.attesterslashingscount,
 		blocks.attestationscount,
 		blocks.depositscount,
-		blocks.withdrawalcount, 
+		COALESCE(withdrawalcount,0) as withdrawalcount, 
 		blocks.voluntaryexitscount,
 		blocks.proposer,
 		blocks.status,
@@ -726,6 +754,8 @@ func ApiSyncCommittee(w http.ResponseWriter, r *http.Request) {
 		period = utils.SyncPeriodOfEpoch(services.LatestEpoch()) + 1
 	}
 
+	// Beware that we do not deduplicate here since a validator can be part multiple times of the same sync committee period
+	// and the order of the committeeindex is important, deduplicating it would mess up the order
 	rows, err := db.ReaderDb.Query(`SELECT period, GREATEST(period*$2, $3) AS start_epoch, ((period+1)*$2)-1 AS end_epoch, ARRAY_AGG(validatorindex ORDER BY committeeindex) AS validators FROM sync_committees WHERE period = $1 GROUP BY period`, period, utils.Config.Chain.ClConfig.EpochsPerSyncCommitteePeriod, utils.Config.Chain.ClConfig.AltairForkEpoch)
 	if err != nil {
 		logger.WithError(err).WithField("url", r.URL.String()).Errorf("error querying db")
@@ -1014,15 +1044,24 @@ func ApiDashboard(w http.ResponseWriter, r *http.Request) {
 }
 
 func getSyncCommitteeInfoForValidators(validators []uint64, period uint64) ([]interface{}, error) {
-	rows, err := db.ReaderDb.Query(
-		`SELECT 
-			period, 
-			GREATEST(period*$3, $4) AS start_epoch, 
-			((period+1)*$3)-1 AS end_epoch, 
-			ARRAY_AGG(validatorindex ORDER BY committeeindex) AS validators 
-		FROM sync_committees 
-		WHERE period = $1 AND validatorindex = ANY($2)
-		GROUP BY period`,
+	rows, err := db.ReaderDb.Query(`
+			WITH
+				data as (
+					SELECT 
+						period,
+						validatorindex,
+						max(committeeindex) as committeeindex
+					FROM sync_committees 
+					WHERE period = $1 AND validatorindex = ANY($2)
+					group by period, validatorindex
+				)	
+			SELECT 
+				period, 
+				GREATEST(period*$3, $4) AS start_epoch, 
+				((period+1)*$3)-1 AS end_epoch, 
+				ARRAY_AGG(validatorindex ORDER BY committeeindex) AS validators 
+			FROM data 	
+			group by period;`,
 		period, pq.Array(validators),
 		utils.Config.Chain.ClConfig.EpochsPerSyncCommitteePeriod, utils.Config.Chain.ClConfig.AltairForkEpoch,
 	)
@@ -1187,7 +1226,13 @@ func getSyncCommitteeSlotsStatistics(validators []uint64, epoch uint64) (types.S
 		lastExportedEpoch = ((lastExportedDay + 1) * epochsPerDay) - 1
 	}
 
-	err = db.ReaderDb.Get(&syncStats, `SELECT SUM(COALESCE(participated_sync_total, 0)) AS participated, SUM(COALESCE(missed_sync_total, 0)) AS missed FROM validator_stats WHERE day = $1 AND validatorindex = ANY($2)`, lastExportedDay, pq.Array(validators))
+	err = db.ReaderDb.Get(&syncStats, `
+		SELECT 
+		COALESCE(SUM(COALESCE(participated_sync_total, 0)), 0) AS participated, 
+		COALESCE(SUM(COALESCE(missed_sync_total, 0)),0) AS missed 
+		FROM validator_stats 
+		WHERE day = $1 AND validatorindex = ANY($2)
+		`, lastExportedDay, pq.Array(validators))
 	if err != nil {
 		return types.SyncCommitteesStats{}, err
 	}
@@ -1212,7 +1257,7 @@ func getSyncCommitteeSlotsStatistics(validators []uint64, epoch uint64) (types.S
 			Validators pq.Int64Array `db:"validators"`
 		}
 		query, args, err := sqlx.In(`
-			SELECT period, COALESCE(ARRAY_AGG(validatorindex), '{}') AS validators
+			SELECT period, COALESCE(ARRAY_AGG(distinct validatorindex), '{}') AS validators
 			FROM sync_committees
 			WHERE period IN (?) AND validatorindex IN (?)
 			GROUP BY period
@@ -2086,7 +2131,7 @@ func ApiValidatorBlsChange(w http.ResponseWriter, r *http.Request) {
 			Address:                  fmt.Sprintf("0x%x", d.Address),
 			Signature:                fmt.Sprintf("0x%x", d.Signature),
 			WithdrawalCredentialsOld: fmt.Sprintf("0x%x", d.WithdrawalCredentialsOld),
-			WithdrawalCredentialsNew: fmt.Sprintf("0x010000000000000000000000%x", d.Address),
+			WithdrawalCredentialsNew: fmt.Sprintf("0x"+utils.BeginningOfSetWithdrawalCredentials+"%x", d.Address),
 		})
 	}
 
@@ -2237,17 +2282,17 @@ func ApiValidatorPerformance(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := db.ReaderDb.Query(`
 	SELECT 
-		validator_performance.validatorindex, 
+		validators.validatorindex, 
 		COALESCE(validator_performance.cl_performance_1d, 0) AS performance1d, 
 		COALESCE(validator_performance.cl_performance_7d, 0) AS performance7d, 
 		COALESCE(validator_performance.cl_performance_31d, 0) AS performance31d, 
 		COALESCE(validator_performance.cl_performance_365d, 0) AS performance365d, 
 		COALESCE(validator_performance.cl_performance_total, 0) AS performanceTotal, 
-		validator_performance.rank7d 
-	FROM validator_performance 
-	LEFT JOIN validators ON 
+		COALESCE(validator_performance.rank7d, 0) AS rank7d
+	FROM validators 
+	LEFT JOIN validator_performance ON 
 		validators.validatorindex = validator_performance.validatorindex 
-	WHERE validator_performance.validatorindex = ANY($1) 
+	WHERE validators.validatorindex = ANY($1) 
 	ORDER BY validatorindex`, pq.Array(queryIndices))
 	if err != nil {
 		SendBadRequestResponse(w, r.URL.String(), "could not retrieve db results")
@@ -2904,6 +2949,9 @@ func getTokenByCode(w http.ResponseWriter, r *http.Request) {
 		pkg.Package = "standard"
 	}
 
+	// BIDS-3049 mobile app uses v1 package ids only
+	pkg.Package = utils.MapProductV2ToV1(pkg.Package)
+
 	var theme string = ""
 	if pkg.Store == "ethpool" {
 		theme = "ethpool"
@@ -2957,6 +3005,9 @@ func getTokenByRefresh(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		pkg.Package = "standard"
 	}
+
+	// BIDS-3049 mobile app uses v1 package ids only
+	pkg.Package = utils.MapProductV2ToV1(pkg.Package)
 
 	var theme string = ""
 	if pkg.Store == "ethpool" {
@@ -3082,7 +3133,6 @@ func hmacSign(data string) string {
 }
 
 func RegisterMobileSubscriptions(w http.ResponseWriter, r *http.Request) {
-
 	w.Header().Set("Content-Type", "application/json")
 
 	var parsedBase types.MobileSubscription
@@ -3091,6 +3141,17 @@ func RegisterMobileSubscriptions(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		logger.Errorf("error parsing body | err: %v", err)
 		SendBadRequestResponse(w, r.URL.String(), "could not parse body")
+		return
+	}
+
+	if parsedBase.ProductID == "plankton" {
+		SendBadRequestResponse(w, r.URL.String(), "old product")
+		return
+	}
+
+	// Only allow ios and android purchases to be registered via this endpoint
+	if parsedBase.Transaction.Type != "ios-appstore" && parsedBase.Transaction.Type != "android-playstore" {
+		SendBadRequestResponse(w, r.URL.String(), "invalid transaction type")
 		return
 	}
 
@@ -3119,10 +3180,14 @@ func RegisterMobileSubscriptions(w http.ResponseWriter, r *http.Request) {
 
 	// we can ignore this error since it always returns a result object and err
 	// case is not needed on receipt insert
-	validationResult, _ := exporter.VerifyReceipt(nil, verifyPackage)
+	validationResult, err := exporter.VerifyReceipt(nil, nil, verifyPackage)
+	if err != nil {
+		utils.LogError(err, "could not verify receipt %v", 0, map[string]interface{}{"receipt": verifyPackage.Receipt})
+	}
 	parsedBase.Valid = validationResult.Valid
+	parsedBase.ProductID = verifyPackage.ProductID // apple verify can change the product id
 
-	err = db.InsertMobileSubscription(nil, claims.UserID, parsedBase, parsedBase.Transaction.Type, parsedBase.Transaction.Receipt, validationResult.ExpirationDate, validationResult.RejectReason, "")
+	err = db.InsertMobileSubscription(nil, claims.UserID, parsedBase, parsedBase.Transaction.Type, verifyPackage.Receipt, validationResult.ExpirationDate, validationResult.RejectReason, "")
 	if err != nil {
 		logger.Errorf("could not save subscription data %v", err)
 		SendBadRequestResponse(w, r.URL.String(), "Can not save subscription data")
@@ -3176,6 +3241,8 @@ func GetUserPremiumByPackage(pkg string) PremiumUser {
 		NotificationThresholds: false,
 		NoAds:                  false,
 	}
+
+	pkg = utils.MapProductV2ToV1(pkg)
 
 	if pkg == "" || pkg == "standard" {
 		return result

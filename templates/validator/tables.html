@@ -22,6 +22,7 @@
         var index = {{.Index}}
         window.addEventListener('load', function() {
             $('#blocks-table').DataTable({
+                searchDelay: 0,
                 processing: true,
                 serverSide: true,
                 stateSave: true,
@@ -113,6 +114,7 @@
 
             function createAttestationTable() {
                 $('#attestations-table').DataTable({
+                    searchDelay: 0,
                     processing: true,
                     serverSide: true,
                     stateSave: true,
@@ -182,6 +184,7 @@
 
             function createWithdrawalTable() {
                 $('#withdrawal-table').DataTable({
+                    searchDelay: 0,
                     processing: true,
                     serverSide: true,
                     stateSave: true,
@@ -262,6 +265,7 @@
 
             function createSyncTable() {
                 $('#sync-table').DataTable({
+                    searchDelay: 0,
                     processing: true,
                     serverSide: true,
                     ordering: false,
@@ -342,6 +346,7 @@
         var index = {{.Index}}
         window.addEventListener('load', function() {
             $('#slashings-table').DataTable({
+                searchDelay: 0,
                 processing: true,
                 serverSide: true,
                 ordering: false,
@@ -622,6 +627,7 @@
         var index = {{.Index}}
         window.addEventListener('load', function() {
             $('#validator-history-table').DataTable({
+                searchDelay: 0,
                 processing: true,
                 details: false,
                 serverSide: true,
@@ -687,9 +693,9 @@
               data-toggle="tooltip"
               data-html="true"
               title="
-                CL: {{ formatElCurrency .Income.IncomeTotal.Cl $.Rates.SelectedCurrency 5 true true true }} <br /> 
-                EL: {{ formatElCurrency .Income.IncomeTotal.El $.Rates.SelectedCurrency 5 true true true }}">
-              <b>{{ formatElCurrency .Income.IncomeTotal.Total $.Rates.SelectedCurrency 5 true true true }}</b>
+                CL: {{ formatElCurrency .Income.IncomeTotal.Cl $.Rates.SelectedCurrency 5 true true true false }} <br /> 
+                EL: {{ formatElCurrency .Income.IncomeTotal.El $.Rates.SelectedCurrency 5 true true true false }}">
+              <b>{{ formatElCurrency .Income.IncomeTotal.Total $.Rates.SelectedCurrency 5 true true true false }}</b>
             </span>
           </td>
         </tr>
@@ -700,9 +706,9 @@
               data-toggle="tooltip"
               data-html="true"
               title="
-                CL: {{ formatElCurrency .Income.IncomeToday.Cl $.Rates.SelectedCurrency 5 true true true }} <br /> 
-                EL: {{ formatElCurrency .Income.IncomeToday.El $.Rates.SelectedCurrency 5 true true true }}">
-              <b>{{ formatElCurrency .Income.IncomeToday.Total $.Rates.SelectedCurrency 5 true true true }}</b>
+                CL: {{ formatElCurrency .Income.IncomeToday.Cl $.Rates.SelectedCurrency 5 true true true false }} <br /> 
+                EL: {{ formatElCurrency .Income.IncomeToday.El $.Rates.SelectedCurrency 5 true true true false }}">
+              <b>{{ formatElCurrency .Income.IncomeToday.Total $.Rates.SelectedCurrency 5 true true true false }}</b>
             </span>
           </td>
         </tr>
@@ -714,13 +720,13 @@
               data-toggle="tooltip"
               data-html="true"
               title="
-                CL: {{ formatElCurrency .Income.Income1d.Cl $.Rates.SelectedCurrency 5 true true true }} | {{ formatElCurrency .Income.Income7d.Cl $.Rates.SelectedCurrency 5 true true true }} | {{ formatElCurrency .Income.Income31d.Cl $.Rates.SelectedCurrency 5 true true true }} <br> 
-                EL: {{ formatElCurrency .Income.Income1d.El $.Rates.SelectedCurrency 5 true true true }} | {{ formatElCurrency .Income.Income7d.El $.Rates.SelectedCurrency 5 true true true }} | {{ formatElCurrency .Income.Income31d.El $.Rates.SelectedCurrency 5 true true true }}">
-              <b>{{ formatElCurrency .Income.Income1d.Total $.Rates.SelectedCurrency 5 false true true }}</b>
+                CL: {{ formatElCurrency .Income.Income1d.Cl $.Rates.SelectedCurrency 5 true true true false }} | {{ formatElCurrency .Income.Income7d.Cl $.Rates.SelectedCurrency 5 true true true false }} | {{ formatElCurrency .Income.Income31d.Cl $.Rates.SelectedCurrency 5 true true true false }} <br> 
+                EL: {{ formatElCurrency .Income.Income1d.El $.Rates.SelectedCurrency 5 true true true false }} | {{ formatElCurrency .Income.Income7d.El $.Rates.SelectedCurrency 5 true true true false }} | {{ formatElCurrency .Income.Income31d.El $.Rates.SelectedCurrency 5 true true true false }}">
+              <b>{{ formatElCurrency .Income.Income1d.Total $.Rates.SelectedCurrency 5 false true true false }}</b>
               |
-              <b>{{ formatElCurrency .Income.Income7d.Total $.Rates.SelectedCurrency 5 false true true }}</b>
+              <b>{{ formatElCurrency .Income.Income7d.Total $.Rates.SelectedCurrency 5 false true true false }}</b>
               |
-              <b>{{ formatElCurrency .Income.Income31d.Total $.Rates.SelectedCurrency 5 false true true }}</b>
+              <b>{{ formatElCurrency .Income.Income31d.Total $.Rates.SelectedCurrency 5 false true true false }}</b>
             </span>
           </td>
         </tr>
@@ -732,7 +738,7 @@
               data-html="true"
               title="
                 CL: {{ formatPercentageWithPrecision .Income.Apr7d.Cl 2 }}% | {{ formatPercentageWithPrecision .Income.Apr31d.Cl 2 }}% | {{ formatPercentageWithPrecision .Income.Apr365d.Cl 2 }}% <br> 
-                El: {{ formatPercentageWithPrecision .Income.Apr7d.El 2 }}% | {{ formatPercentageWithPrecision .Income.Apr31d.El 2 }}% | {{ formatPercentageWithPrecision .Income.Apr365d.El 2 }}%">
+                EL: {{ formatPercentageWithPrecision .Income.Apr7d.El 2 }}% | {{ formatPercentageWithPrecision .Income.Apr31d.El 2 }}% | {{ formatPercentageWithPrecision .Income.Apr365d.El 2 }}%">
               <span class="{{ if gtf .Income.Apr7d.Total 0 }}text-success{{ end }}{{ if gtf  0 .Income.Apr7d.Total }}text-danger{{ end }}"><b>{{ formatPercentageWithPrecision .Income.Apr7d.Total 2 }}%</b></span>
               |
               <span class="{{ if gtf .Income.Apr31d.Total 0 }}text-success{{ end }}{{ if gtf  0 .Income.Apr31d.Total }}text-danger{{ end }}"><b>{{ formatPercentageWithPrecision .Income.Apr31d.Total 2 }}%</b></span>
@@ -749,10 +755,10 @@
               data-toggle="tooltip"
               data-html="true"
               title="
-                  CL: 1d: {{ formatElCurrency .Income1d.Cl $.Rates.SelectedCurrency 5 false true true }} | 7d: {{ formatElCurrency .Income.Income7d.Cl $.Rates.SelectedCurrency 5 false true true }} | 31d: {{ formatElCurrency .Income.Income31d.Cl $.Rates.SelectedCurrency 5 true true true }} <br /> 
-                  EL: 1d: {{ formatElCurrency .Income1d.El $.Rates.SelectedCurrency 5 false true true }} | 7d: {{ formatElCurrency .Income.Income7d.El $.Rates.SelectedCurrency 5 false true true }} | 31d: {{ formatElCurrency .Income.Income31d.El $.Rates.SelectedCurrency 5 true true true }} <br /> 
-                  All: 1d: {{ formatElCurrency .Income1d.Total $.Rates.SelectedCurrency 5 false true true }} | 7d: {{ formatElCurrency .Income.Income7d.Total $.Rates.SelectedCurrency 5 false true true }} | 31d: {{ formatElCurrency .Income.Income31d.Total $.Rates.SelectedCurrency 5 true true true }}">
-              <b>{{ formatElCurrency .Income.Income7d.Total $.Rates.SelectedCurrency 5 true true true }}</b>
+                  CL: 1d: {{ formatElCurrency .Income1d.Cl $.Rates.SelectedCurrency 5 false true true false }} | 7d: {{ formatElCurrency .Income.Income7d.Cl $.Rates.SelectedCurrency 5 false true true false }} | 31d: {{ formatElCurrency .Income.Income31d.Cl $.Rates.SelectedCurrency 5 true true true false }} <br /> 
+                  EL: 1d: {{ formatElCurrency .Income1d.El $.Rates.SelectedCurrency 5 false true true false }} | 7d: {{ formatElCurrency .Income.Income7d.El $.Rates.SelectedCurrency 5 false true true false }} | 31d: {{ formatElCurrency .Income.Income31d.El $.Rates.SelectedCurrency 5 true true true false }} <br /> 
+                  All: 1d: {{ formatElCurrency .Income1d.Total $.Rates.SelectedCurrency 5 false true true false }} | 7d: {{ formatElCurrency .Income.Income7d.Total $.Rates.SelectedCurrency 5 false true true false }} | 31d: {{ formatElCurrency .Income.Income31d.Total $.Rates.SelectedCurrency 5 true true true false }}">
+              <b>{{ formatElCurrency .Income.Income7d.Total $.Rates.SelectedCurrency 5 true true true false }}</b>
               <i class="far fa-question-circle"></i>
             </span>
           </td>

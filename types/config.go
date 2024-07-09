@@ -17,6 +17,7 @@ type Config struct {
 		Port         string `yaml:"port" envconfig:"READER_DB_PORT"`
 		MaxOpenConns int    `yaml:"maxOpenConns" envconfig:"READER_DB_MAX_OPEN_CONNS"`
 		MaxIdleConns int    `yaml:"maxIdleConns" envconfig:"READER_DB_MAX_IDLE_CONNS"`
+		SSL          bool   `yaml:"ssl" envconfig:"READER_DB_SSL"`
 	} `yaml:"readerDatabase"`
 	WriterDatabase struct {
 		Username     string `yaml:"user" envconfig:"WRITER_DB_USERNAME"`
@@ -26,6 +27,7 @@ type Config struct {
 		Port         string `yaml:"port" envconfig:"WRITER_DB_PORT"`
 		MaxOpenConns int    `yaml:"maxOpenConns" envconfig:"WRITER_DB_MAX_OPEN_CONNS"`
 		MaxIdleConns int    `yaml:"maxIdleConns" envconfig:"WRITER_DB_MAX_IDLE_CONNS"`
+		SSL          bool   `yaml:"ssl" envconfig:"WRITER_DB_SSL"`
 	} `yaml:"writerDatabase"`
 	Bigtable struct {
 		Project             string `yaml:"project" envconfig:"BIGTABLE_PROJECT"`
@@ -55,14 +57,15 @@ type Config struct {
 		ClConfig                   ClChainConfig
 		ElConfig                   *params.ChainConfig
 	} `yaml:"chain"`
-	Eth1ErigonEndpoint  string `yaml:"eth1ErigonEndpoint" envconfig:"ETH1_ERIGON_ENDPOINT"`
-	Eth1GethEndpoint    string `yaml:"eth1GethEndpoint" envconfig:"ETH1_GETH_ENDPOINT"`
-	EtherscanAPIKey     string `yaml:"etherscanApiKey" envconfig:"ETHERSCAN_API_KEY"`
-	EtherscanAPIBaseURL string `yaml:"etherscanApiBaseUrl" envconfig:"ETHERSCAN_API_BASEURL"`
-	RedisCacheEndpoint  string `yaml:"redisCacheEndpoint" envconfig:"REDIS_CACHE_ENDPOINT"`
-	TieredCacheProvider string `yaml:"tieredCacheProvider" envconfig:"CACHE_PROVIDER"`
-	ReportServiceStatus bool   `yaml:"reportServiceStatus" envconfig:"REPORT_SERVICE_STATUS"`
-	Indexer             struct {
+	Eth1ErigonEndpoint        string `yaml:"eth1ErigonEndpoint" envconfig:"ETH1_ERIGON_ENDPOINT"`
+	Eth1GethEndpoint          string `yaml:"eth1GethEndpoint" envconfig:"ETH1_GETH_ENDPOINT"`
+	EtherscanAPIKey           string `yaml:"etherscanApiKey" envconfig:"ETHERSCAN_API_KEY"`
+	EtherscanAPIBaseURL       string `yaml:"etherscanApiBaseUrl" envconfig:"ETHERSCAN_API_BASEURL"`
+	RedisCacheEndpoint        string `yaml:"redisCacheEndpoint" envconfig:"REDIS_CACHE_ENDPOINT"`
+	RedisSessionStoreEndpoint string `yaml:"redisSessionStoreEndpoint" envconfig:"REDIS_SESSION_STORE_ENDPOINT"`
+	TieredCacheProvider       string `yaml:"tieredCacheProvider" envconfig:"CACHE_PROVIDER"`
+	ReportServiceStatus       bool   `yaml:"reportServiceStatus" envconfig:"REPORT_SERVICE_STATUS"`
+	Indexer                   struct {
 		Enabled bool `yaml:"enabled" envconfig:"INDEXER_ENABLED"`
 		Node    struct {
 			Port     string `yaml:"port" envconfig:"INDEXER_NODE_PORT"`
@@ -115,6 +118,7 @@ type Config struct {
 			Port         string `yaml:"port" envconfig:"FRONTEND_READER_DB_PORT"`
 			MaxOpenConns int    `yaml:"maxOpenConns" envconfig:"FRONTEND_READER_DB_MAX_OPEN_CONNS"`
 			MaxIdleConns int    `yaml:"maxIdleConns" envconfig:"FRONTEND_READER_DB_MAX_IDLE_CONNS"`
+			SSL          bool   `yaml:"ssl" envconfig:"FRONTEND_READER_DB_SSL"`
 		} `yaml:"readerDatabase"`
 		WriterDatabase struct {
 			Username     string `yaml:"user" envconfig:"FRONTEND_WRITER_DB_USERNAME"`
@@ -124,24 +128,50 @@ type Config struct {
 			Port         string `yaml:"port" envconfig:"FRONTEND_WRITER_DB_PORT"`
 			MaxOpenConns int    `yaml:"maxOpenConns" envconfig:"FRONTEND_WRITER_DB_MAX_OPEN_CONNS"`
 			MaxIdleConns int    `yaml:"maxIdleConns" envconfig:"FRONTEND_WRITER_DB_MAX_IDLE_CONNS"`
+			SSL          bool   `yaml:"ssl" envconfig:"FRONTEND_WRITER_DB_SSL"`
 		} `yaml:"writerDatabase"`
-		Stripe struct {
+		OldProductsDeadlineUnix int64 `yaml:"oldProductsDeadline" envconfig:"FRONTEND_OLD_PRODUCTS_DEADLINE_UNIX"`
+		Stripe                  struct {
+			Webhook   string `yaml:"webhook" envconfig:"FRONTEND_STRIPE_WEBHOOK"`
 			SecretKey string `yaml:"secretKey" envconfig:"FRONTEND_STRIPE_SECRET_KEY"`
 			PublicKey string `yaml:"publicKey" envconfig:"FRONTEND_STRIPE_PUBLIC_KEY"`
-			Sapphire  string `yaml:"sapphire" envconfig:"FRONTEND_STRIPE_SAPPHIRE"`
-			Emerald   string `yaml:"emerald" envconfig:"FRONTEND_STRIPE_EMERALD"`
-			Diamond   string `yaml:"diamond" envconfig:"FRONTEND_STRIPE_DIAMOND"`
-			Whale     string `yaml:"whale" envconfig:"FRONTEND_STRIPE_WHALE"`
-			Goldfish  string `yaml:"goldfish" envconfig:"FRONTEND_STRIPE_GOLDFISH"`
-			Plankton  string `yaml:"plankton" envconfig:"FRONTEND_STRIPE_PLANKTON"`
-			Webhook   string `yaml:"webhook" envconfig:"FRONTEND_STRIPE_WEBHOOK"`
+
+			Sapphire string `yaml:"sapphire" envconfig:"FRONTEND_STRIPE_SAPPHIRE"`
+			Emerald  string `yaml:"emerald" envconfig:"FRONTEND_STRIPE_EMERALD"`
+			Diamond  string `yaml:"diamond" envconfig:"FRONTEND_STRIPE_DIAMOND"`
+			Whale    string `yaml:"whale" envconfig:"FRONTEND_STRIPE_WHALE"`
+			Goldfish string `yaml:"goldfish" envconfig:"FRONTEND_STRIPE_GOLDFISH"`
+			Plankton string `yaml:"plankton" envconfig:"FRONTEND_STRIPE_PLANKTON"`
+
+			Iron         string `yaml:"iron" envconfig:"FRONTEND_STRIPE_IRON"`
+			IronYearly   string `yaml:"ironYearly" envconfig:"FRONTEND_STRIPE_IRON_YEARLY"`
+			Silver       string `yaml:"silver" envconfig:"FRONTEND_STRIPE_SILVER"`
+			SilverYearly string `yaml:"silverYearly" envconfig:"FRONTEND_STRIPE_SILVER_YEARLY"`
+			Gold         string `yaml:"gold" envconfig:"FRONTEND_STRIPE_GOLD"`
+			GoldYearly   string `yaml:"goldYearly" envconfig:"FRONTEND_STRIPE_GOLD_YEARLY"`
+
+			Guppy         string `yaml:"guppy" envconfig:"FRONTEND_STRIPE_GUPPY"`
+			GuppyYearly   string `yaml:"guppyYearly" envconfig:"FRONTEND_STRIPE_GUPPY_YEARLY"`
+			Dolphin       string `yaml:"dolphin" envconfig:"FRONTEND_STRIPE_DOLPHIN"`
+			DolphinYearly string `yaml:"dolphinYearly" envconfig:"FRONTEND_STRIPE_DOLPHIN_YEARLY"`
+			Orca          string `yaml:"orca" envconfig:"FRONTEND_STRIPE_ORCA"`
+			OrcaYearly    string `yaml:"orcaYearly" envconfig:"FRONTEND_STRIPE_ORCA_YEARLY"`
+
+			VdbAddon1k        string `yaml:"vdbAddon1k" envconfig:"FRONTEND_STRIPE_VDB_ADDON_1K"`
+			VdbAddon1kYearly  string `yaml:"vdbAddon1kYearly" envconfig:"FRONTEND_STRIPE_VDB_ADDON_1K_YEARLY"`
+			VdbAddon10k       string `yaml:"vdbAddon10k" envconfig:"FRONTEND_STRIPE_VDB_ADDON_10K"`
+			VdbAddon10kYearly string `yaml:"vdbAddon10kYearly" envconfig:"FRONTEND_STRIPE_VDB_ADDON_10K_YEARLY"`
 		}
-		SessionSecret          string `yaml:"sessionSecret" envconfig:"FRONTEND_SESSION_SECRET"`
-		JwtSigningSecret       string `yaml:"jwtSigningSecret" envconfig:"FRONTEND_JWT_SECRET"`
-		JwtIssuer              string `yaml:"jwtIssuer" envconfig:"FRONTEND_JWT_ISSUER"`
-		JwtValidityInMinutes   int    `yaml:"jwtValidityInMinutes" envconfig:"FRONTEND_JWT_VALIDITY_INMINUTES"`
-		MaxMailsPerEmailPerDay int    `yaml:"maxMailsPerEmailPerDay" envconfig:"FRONTEND_MAX_MAIL_PER_EMAIL_PER_DAY"`
-		Mail                   struct {
+		RatelimitUpdateInterval              time.Duration `yaml:"ratelimitUpdateInterval" envconfig:"FRONTEND_RATELIMIT_UPDATE_INTERVAL"`
+		SessionSameSiteNone                  bool          `yaml:"sessionSameSiteNone" envconfig:"FRONTEND_SESSION_SAMESITE_NONE"`
+		SessionSecret                        string        `yaml:"sessionSecret" envconfig:"FRONTEND_SESSION_SECRET"`
+		SessionCookieDomain                  string        `yaml:"sessionCookieDomain" envconfig:"FRONTEND_SESSION_COOKIE_DOMAIN"`
+		SessionCookieDeriveDomainFromRequest bool          `yaml:"sessionCookieDeriveDomainFromRequest" envconfig:"FRONTEND_SESSION_COOKIE_DERIVE_DOMAIN_FROM_REQUEST"`
+		JwtSigningSecret                     string        `yaml:"jwtSigningSecret" envconfig:"FRONTEND_JWT_SECRET"`
+		JwtIssuer                            string        `yaml:"jwtIssuer" envconfig:"FRONTEND_JWT_ISSUER"`
+		JwtValidityInMinutes                 int           `yaml:"jwtValidityInMinutes" envconfig:"FRONTEND_JWT_VALIDITY_INMINUTES"`
+		MaxMailsPerEmailPerDay               int           `yaml:"maxMailsPerEmailPerDay" envconfig:"FRONTEND_MAX_MAIL_PER_EMAIL_PER_DAY"`
+		Mail                                 struct {
 			SMTP struct {
 				Server   string `yaml:"server" envconfig:"FRONTEND_MAIL_SMTP_SERVER"`
 				Host     string `yaml:"host" envconfig:"FRONTEND_MAIL_SMTP_HOST"`
@@ -158,9 +188,14 @@ type Config struct {
 				InquiryEmail string `yaml:"inquiryEmail" envconfig:"FRONTEND_MAIL_CONTACT_INQUIRY_EMAIL"`
 			} `yaml:"contact"`
 		} `yaml:"mail"`
-		GATag                 string `yaml:"gatag" envconfig:"GATAG"`
-		VerifyAppSubs         bool   `yaml:"verifyAppSubscriptions" envconfig:"FRONTEND_VERIFY_APP_SUBSCRIPTIONS"`
-		AppSubsAppleSecret    string `yaml:"appSubsAppleSecret" envconfig:"FRONTEND_APP_SUBS_APPLE_SECRET"`
+		GATag         string `yaml:"gatag" envconfig:"GATAG"`
+		VerifyAppSubs bool   `yaml:"verifyAppSubscriptions" envconfig:"FRONTEND_VERIFY_APP_SUBSCRIPTIONS"`
+		Apple         struct {
+			LegacyAppSubsAppleSecret string `yaml:"appSubsAppleSecret" envconfig:"FRONTEND_APP_SUBS_APPLE_SECRET"`
+			KeyID                    string `yaml:"keyID" envconfig:"FRONTEND_APPLE_APP_KEY_ID"`
+			IssueID                  string `yaml:"issueID" envconfig:"FRONTEND_APPLE_ISSUE_ID"`
+			Certificate              string `yaml:"certificate" envconfig:"FRONTEND_APPLE_CERTIFICATE"`
+		} `yaml:"apple"`
 		AppSubsGoogleJSONPath string `yaml:"appSubsGoogleJsonPath" envconfig:"FRONTEND_APP_SUBS_GOOGLE_JSON_PATH"`
 		DisableStatsInserts   bool   `yaml:"disableStatsInserts" envconfig:"FRONTEND_DISABLE_STATS_INSERTS"`
 		ShowDonors            struct {
@@ -222,6 +257,7 @@ type Config struct {
 		ApiKey                          string                           `yaml:"apiKey" envconfig:"MONITORING_API_KEY"`
 		ServiceMonitoringConfigurations []ServiceMonitoringConfiguration `yaml:"serviceMonitoringConfigurations" envconfig:"SERVICE_MONITORING_CONFIGURATIONS"`
 	} `yaml:"monitoring"`
+	GithubApiHost string `yaml:"githubApiHost" envconfig:"GITHUB_API_HOST"`
 }
 
 type DatabaseConfig struct {
@@ -232,6 +268,7 @@ type DatabaseConfig struct {
 	Port         string
 	MaxOpenConns int
 	MaxIdleConns int
+	SSL          bool
 }
 
 type ServiceMonitoringConfiguration struct {
@@ -257,8 +294,8 @@ type ConfigJsonResponse struct {
 		BellatrixForkEpoch                      string `json:"BELLATRIX_FORK_EPOCH"`
 		CapellaForkVersion                      string `json:"CAPELLA_FORK_VERSION"`
 		CapellaForkEpoch                        string `json:"CAPELLA_FORK_EPOCH"`
-		DenebForkVersion                        string `yaml:"DENEB_FORK_VERSION"`
-		DenebForkEpoch                          string `yaml:"DENEB_FORK_EPOCH"`
+		DenebForkVersion                        string `json:"DENEB_FORK_VERSION"`
+		DenebForkEpoch                          string `json:"DENEB_FORK_EPOCH"`
 		SecondsPerSlot                          string `json:"SECONDS_PER_SLOT"`
 		SecondsPerEth1Block                     string `json:"SECONDS_PER_ETH1_BLOCK"`
 		MinValidatorWithdrawabilityDelay        string `json:"MIN_VALIDATOR_WITHDRAWABILITY_DELAY"`
@@ -270,6 +307,7 @@ type ConfigJsonResponse struct {
 		EjectionBalance                         string `json:"EJECTION_BALANCE"`
 		MinPerEpochChurnLimit                   string `json:"MIN_PER_EPOCH_CHURN_LIMIT"`
 		ChurnLimitQuotient                      string `json:"CHURN_LIMIT_QUOTIENT"`
+		MaxPerEpochActivationChurnLimit         string `json:"MAX_PER_EPOCH_ACTIVATION_CHURN_LIMIT"`
 		ProposerScoreBoost                      string `json:"PROPOSER_SCORE_BOOST"`
 		DepositChainID                          string `json:"DEPOSIT_CHAIN_ID"`
 		DepositNetworkID                        string `json:"DEPOSIT_NETWORK_ID"`

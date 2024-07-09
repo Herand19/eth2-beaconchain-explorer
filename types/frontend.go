@@ -51,6 +51,16 @@ const (
 	SyncCommitteeSoon                                EventName = "validator_synccommittee_soon"
 )
 
+var MachineEvents = []EventName{
+	MonitoringMachineCpuLoadEventName,
+	MonitoringMachineOfflineEventName,
+	MonitoringMachineDiskAlmostFullEventName,
+	MonitoringMachineCpuLoadEventName,
+	MonitoringMachineMemoryUsageEventName,
+	MonitoringMachineSwitchedToETH2FallbackEventName,
+	MonitoringMachineSwitchedToETH1FallbackEventName,
+}
+
 var UserIndexEvents = []EventName{
 	EthClientUpdateEventName,
 	MonitoringMachineCpuLoadEventName,
@@ -96,6 +106,15 @@ var EventLabel map[EventName]string = map[EventName]string{
 
 func IsUserIndexed(event EventName) bool {
 	for _, ev := range UserIndexEvents {
+		if ev == event {
+			return true
+		}
+	}
+	return false
+}
+
+func IsMachineNotification(event EventName) bool {
+	for _, ev := range MachineEvents {
 		if ev == event {
 			return true
 		}
@@ -291,12 +310,14 @@ type MobileSubscriptionTransactionGeneric struct {
 }
 
 type PremiumData struct {
-	ID        uint64    `db:"id"`
-	Receipt   string    `db:"receipt"`
-	Store     string    `db:"store"`
-	Active    bool      `db:"active"`
-	ProductID string    `db:"product_id"`
-	ExpiresAt time.Time `db:"expires_at"`
+	ID               uint64    `db:"id"`
+	Receipt          string    `db:"receipt"`
+	Store            string    `db:"store"`
+	Active           bool      `db:"active"`
+	ValidateRemotely bool      `db:"validate_remotely"`
+	ProductID        string    `db:"product_id"`
+	UserID           uint64    `db:"user_id"`
+	ExpiresAt        time.Time `db:"expires_at"`
 }
 
 type UserWithPremium struct {
@@ -530,9 +551,9 @@ type Eth1AddressSearchItem struct {
 }
 
 type RawMempoolResponse struct {
-	Pending map[string]map[int]*RawMempoolTransaction `json:"pending"`
-	Queued  map[string]map[int]*RawMempoolTransaction `json:"queued"`
-	BaseFee map[string]map[int]*RawMempoolTransaction `json:"baseFee"`
+	Pending map[string]map[string]*RawMempoolTransaction `json:"pending"`
+	Queued  map[string]map[string]*RawMempoolTransaction `json:"queued"`
+	BaseFee map[string]map[string]*RawMempoolTransaction `json:"baseFee"`
 
 	TxsByHash map[common.Hash]*RawMempoolTransaction
 }

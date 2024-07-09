@@ -58,6 +58,7 @@ function showValidatorHist(index) {
   }
 
   $("#dash-validator-history-table").DataTable({
+    searchDelay: 0,
     processing: true,
     serverSide: true,
     lengthChange: false,
@@ -239,6 +240,7 @@ function renderProposedHistoryTable(data) {
   }
 
   $("#proposals-table").DataTable({
+    searchDelay: 0,
     serverSide: false,
     data: data,
     processing: false,
@@ -297,7 +299,7 @@ function showProposedHistoryTable() {
   }).then((res) => {
     res.json().then(function (data) {
       let proposedHistTableData = []
-      for (let item of data) {
+      for (let item of data.data) {
         proposedHistTableData.push([item[0], item[1], [item[2], item[3], item[4]]])
       }
       renderProposedHistoryTable(proposedHistTableData)
@@ -471,6 +473,7 @@ $(document).ready(function () {
   })
   $.fn.DataTable.ext.pager.numbers_length = 5
   var validatorsDataTable = (window.vdt = $("#validators").DataTable({
+    searchDelay: 0,
     processing: true,
     serverSide: false,
     searching: true,

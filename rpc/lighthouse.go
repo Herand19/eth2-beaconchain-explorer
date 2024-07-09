@@ -55,8 +55,15 @@ func NewLighthouseClient(endpoint string, chainID *big.Int) (*LighthouseClient, 
 
 func (lc *LighthouseClient) GetNewBlockChan() chan *types.Block {
 	blkCh := make(chan *types.Block, 10)
+	req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("%s/eth/v1/events?topics=head", lc.endpoint), nil)
+	if err != nil {
+		logger.Fatal(err, "error initializing event sse request", 0)
+	}
+	// disable gzip compression for sse
+	req.Header.Set("accept-encoding", "identity")
+
 	go func() {
-		stream, err := eventsource.Subscribe(fmt.Sprintf("%s/eth/v1/events?topics=head", lc.endpoint), "")
+		stream, err := eventsource.SubscribeWithRequest("", req)
 
 		if err != nil {
 			utils.LogFatal(err, "getting eventsource stream error", 0)
@@ -1220,11 +1227,27 @@ func (lc *LighthouseClient) GetValidatorParticipation(epoch uint64) (*types.Vali
 	var res *types.ValidatorParticipation
 	if epoch < request_epoch {
 		// we requested the next epoch, so we have to use the previous value for everything here
+
+		prevEpochActiveGwei := parsedResponse.Data.PreviousEpochActiveGwei
+		if prevEpochActiveGwei == 0 {
+			// lh@5.2.0+ has no previous_epoch_active_gwei field anymore, see https://github.com/sigp/lighthouse/pull/5279
+			prevResp, err := lc.get(fmt.Sprintf("%s/lighthouse/validator_inclusion/%d/global", lc.endpoint, request_epoch-1))
+			if err != nil {
+				return nil, fmt.Errorf("error retrieving validator participation data for prevEpoch %v: %w", request_epoch-1, err)
+			}
+			var parsedPrevResponse LighthouseValidatorParticipationResponse
+			err = json.Unmarshal(prevResp, &parsedPrevResponse)
+			if err != nil {
+				return nil, fmt.Errorf("error parsing validator participation data for prevEpoch %v: %w", epoch, err)
+			}
+			prevEpochActiveGwei = parsedPrevResponse.Data.CurrentEpochActiveGwei
+		}
+
 		res = &types.ValidatorParticipation{
 			Epoch:                   epoch,
-			GlobalParticipationRate: float32(parsedResponse.Data.PreviousEpochTargetAttestingGwei) / float32(parsedResponse.Data.PreviousEpochActiveGwei),
+			GlobalParticipationRate: float32(parsedResponse.Data.PreviousEpochTargetAttestingGwei) / float32(prevEpochActiveGwei),
 			VotedEther:              uint64(parsedResponse.Data.PreviousEpochTargetAttestingGwei),
-			EligibleEther:           uint64(parsedResponse.Data.PreviousEpochActiveGwei),
+			EligibleEther:           uint64(prevEpochActiveGwei),
 			Finalized:               epoch <= head.FinalizedEpoch && head.JustifiedEpoch > 0,
 		}
 	} else {
@@ -1270,7 +1293,7 @@ var errNotFound = errors.New("not found 404")
 func (lc *LighthouseClient) get(url string) ([]byte, error) {
 	// t0 := time.Now()
 	// defer func() { fmt.Println(url, time.Since(t0)) }()
-	client := &http.Client{Timeout: time.Second * 120}
+	client := &http.Client{Timeout: time.Minute * 2}
 	resp, err := client.Get(url)
 	if err != nil {
 		return nil, err

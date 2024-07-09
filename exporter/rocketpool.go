@@ -138,7 +138,7 @@ func NewRocketpoolExporter(eth1Client *ethclient.Client, storageContractAddressH
 	rpe.Eth1Client = eth1Client
 	rpe.API = rp
 	rpe.DB = db
-	rpe.UpdateInterval = time.Second * 60
+	rpe.UpdateInterval = time.Minute
 	rpe.MinipoolsByAddress = map[string]*RocketpoolMinipool{}
 	rpe.NodesByAddress = map[string]*RocketpoolNode{}
 	rpe.DAOProposalsByID = map[uint64]*RocketpoolDAOProposal{}
@@ -219,7 +219,7 @@ func (rp *RocketpoolExporter) InitDAOMembers() error {
 }
 
 func (rp *RocketpoolExporter) Run() error {
-	errorInterval := time.Second * 60
+	errorInterval := time.Minute
 	t := time.NewTicker(rp.UpdateInterval)
 	defer t.Stop()
 	var count int64 = 0
@@ -363,14 +363,9 @@ func contains(s []RocketpoolRewardTreeDownloadable, e uint64) bool {
 
 func (rp *RocketpoolExporter) Update(count int64) error {
 	var wg errgroup.Group
-	wg.Go(func() error {
-		if count == 0 || count%5 == 4 { // run download one iteration before we update nodes
-			return rp.DownloadMissingRewardTrees()
-		}
-		return nil
-	})
+	wg.Go(func() error { return rp.DownloadMissingRewardTrees() })
 	wg.Go(func() error { return rp.UpdateMinipools() })
-	wg.Go(func() error { return rp.UpdateNodes(count%5 == 0) })
+	wg.Go(func() error { return rp.UpdateNodes(true) })
 	wg.Go(func() error { return rp.UpdateDAOProposals() })
 	wg.Go(func() error { return rp.UpdateDAOMembers() })
 	wg.Go(func() error { return rp.UpdateNetworkStats() })
@@ -1588,7 +1583,7 @@ func CalculateLifetimeNodeRewardsAllLegacy(rp *rocketpool.RocketPool, intervalSi
 	// Construct a filter query for relevant logs
 	addressFilter := []common.Address{*rocketRewardsPool.Address}
 	// RPLTokensClaimed(address clamingContract, address claimingAddress, uint256 amount, uint256 time)
-	topicFilter := [][]common.Hash{{rocketRewardsPool.ABI.Events["RPLTokensClaimed"].ID}, {rocketClaimNode.Address.Hash()}}
+	topicFilter := [][]common.Hash{{rocketRewardsPool.ABI.Events["RPLTokensClaimed"].ID}, {common.BytesToHash(rocketClaimNode.Address[:])}}
 
 	sumMap := make(map[string]*big.Int)
 	prerecordedIntervals, exists := firstBlockOfRedstone[utils.Config.Chain.Name]
@@ -1872,19 +1867,29 @@ func (b *QuotedBigInt) UnmarshalJSON(p []byte) error {
 }
 
 func DownloadRewardsFile(fileName string, interval uint64, cid string, isDaemon bool) ([]byte, error) {
-
 	ipfsFilename := fileName + ".zst"
+
+	split := strings.Split(fileName, "-")
+	var network string
+	if len(split) > 3 {
+		network = split[2]
+	}
+
+	client := &http.Client{
+		Timeout: 40 * time.Second,
+	}
 
 	// Create URL list
 	urls := []string{
 		fmt.Sprintf("https://%s.ipfs.dweb.link/%s", cid, ipfsFilename),
 		fmt.Sprintf("https://ipfs.io/ipfs/%s/%s", cid, ipfsFilename),
+		fmt.Sprintf("https://github.com/rocket-pool/rewards-trees/raw/main/%s/%s", network, fileName),
 	}
 
 	// Attempt downloads
 	errBuilder := strings.Builder{}
 	for _, url := range urls {
-		resp, err := http.Get(url)
+		resp, err := client.Get(url)
 		if err != nil {
 			errBuilder.WriteString(fmt.Sprintf("Downloading %s failed (%s)\n", url, err.Error()))
 			continue
@@ -1903,13 +1908,16 @@ func DownloadRewardsFile(fileName string, interval uint64, cid string, isDaemon 
 			}
 
 			// Decompress it
-			decompressedBytes, err := decompressFile(bytes)
-			if err != nil {
-				errBuilder.WriteString(fmt.Sprintf("Error decompressing %s: %s\n", url, err.Error()))
-				continue
+			writeBytes := bytes
+			if strings.HasSuffix(url, ".zst") {
+				writeBytes, err = decompressFile(bytes)
+				if err != nil {
+					errBuilder.WriteString(fmt.Sprintf("Error decompressing %s: %s\n", url, err.Error()))
+					continue
+				}
 			}
 
-			return decompressedBytes, nil
+			return writeBytes, nil
 		}
 	}
 
